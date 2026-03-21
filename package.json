@@ -1,0 +1,21 @@
+{
+  "name": "cv-career-advisor",
+  "version": "1.0.0",
+  "description": "A web application that reads PDF CVs and suggests career paths and development points",
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "dev:backend": "cd backend && npm run dev",
+    "dev:frontend": "cd frontend && npm run dev",
+    "build": "npm run build:frontend && npm run build:backend",
+    "build:frontend": "cd frontend && npm run build",
+    "build:backend": "cd backend && npm run build",
+    "start": "cd backend && npm start"
+  },
+  "keywords": ["cv", "career", "pdf", "advisor"],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}
