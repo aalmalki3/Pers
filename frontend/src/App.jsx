@@ -1,76 +1,99 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useRef } from 'react';
 import html2pdf from 'html2pdf.js';
-import { pdfjs } from 'pdfjs-dist';
-
-// Set worker source for PDF.js
-pdfjs.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjs.version}/pdf.worker.min.js`;
 
 function App() {
   const [file, setFile] = useState(null);
-  const [pdfUrl, setPdfUrl] = useState(null);
-  const [analysis, setAnalysis] = useState(null);
+  const [fileUrl, setFileUrl] = useState(null);
+  const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState('dashboard'); // dashboard, editor
+  const [error, setError] = useState('');
+  const [activeTab, setActiveTab] = useState('analysis'); // analysis, editor
   const [darkMode, setDarkMode] = useState(false);
   
   // Editor State
-  const [cvData, setCvData] = useState({
-    header: { name: '', title: '', contact: '' },
-    summary: '',
-    experience: [],
-    education: [],
-    skills: []
-  });
-
-  // Theme Toggle
-  const toggleTheme = () => {
-    setDarkMode(!darkMode);
-    document.body.style.background = darkMode ? '#ffffff' : '#f3f4f6';
-    document.body.style.color = darkMode ? '#1f2937' : '#ffffff';
-  };
+  const [cvContent, setCvContent] = useState([]);
+  const [selectedBlock, setSelectedBlock] = useState(null);
+  const pdfViewerRef = useRef(null);
+  const editorRef = useRef(null);
 
   const handleFileChange = (e) => {
     if (e.target.files[0]) {
       const selectedFile = e.target.files[0];
       setFile(selectedFile);
-      setPdfUrl(URL.createObjectURL(selectedFile));
-      setAnalysis(null);
-      setActiveTab('dashboard');
-      analyzeFile(selectedFile);
+      setFileUrl(URL.createObjectURL(selectedFile));
+      setError('');
+      setResult(null);
+      setActiveTab('analysis');
+      
+      // Reset editor
+      setCvContent([
+        { id: 1, type: 'header', content: 'Your Name', style: { fontSize: '24px', fontWeight: 'bold', color: '#000000', textAlign: 'center' } },
+        { id: 2, type: 'text', content: 'Phone | Email | Location', style: { fontSize: '14px', color: '#333333', textAlign: 'center' } },
+        { id: 3, type: 'section', content: 'Professional Experience', style: { fontSize: '18px', fontWeight: 'bold', color: '#2c3e50', marginTop: '20px' } },
+        { id: 4, type: 'text', content: 'Job Title - Company Name\nDates\n- Achievement 1\n- Achievement 2', style: { fontSize: '14px', color: '#333333', lineHeight: '1.5' } }
+      ]);
     }
   };
 
-  const analyzeFile = async (file) => {
+  const handleUpload = async () => {
+    if (!file) return;
     setLoading(true);
+    setError('');
+    setResult(null);
+
     const formData = new FormData();
     formData.append('cv', file);
 
     try {
-      const res = await fetch('/api/upload-cv', { method: 'POST', body: formData });
-      const data = await res.json();
-      if (res.ok) {
-        setAnalysis(data);
-        // Auto-populate editor with extracted text (Simple heuristic)
-        setCvData(prev => ({
-          ...prev,
-          summary: data.rawText.split('SUMMARY')[1]?.split('EXPERIENCE')[0]?.trim() || '',
-          // In a real app, we'd parse experience/education more deeply here
-        }));
-      } else {
-        alert(data.error);
-      }
+      const response = await fetch('/api/upload-cv', { method: 'POST', body: formData });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.details || 'Failed to upload');
+      setResult(data);
+      
+      // Pre-fill editor with extracted text (simplified)
+      const lines = data.rawText.split('\n').filter(l => l.trim().length > 0);
+      const newContent = lines.map((line, idx) => ({
+        id: idx,
+        type: line.length > 50 ? 'text' : 'header',
+        content: line,
+        style: { 
+          fontSize: line.length > 50 ? '14px' : '16px', 
+          fontWeight: line.length > 50 ? 'normal' : 'bold',
+          color: '#000000',
+          marginBottom: '8px'
+        }
+      }));
+      setCvContent(newContent);
+      setActiveTab('editor');
     } catch (err) {
-      alert('Failed to analyze');
+      setError(err.message);
     } finally {
       setLoading(false);
     }
   };
 
+  const updateBlock = (id, field, value) => {
+    setCvContent(prev => prev.map(block => 
+      block.id === id ? { ...block, [field]: value } : block
+    ));
+  };
+
+  const updateStyle = (id, styleProp, value) => {
+    setCvContent(prev => prev.map(block => 
+      block.id === id ? { ...block, style: { ...block.style, [styleProp]: value } } : block
+    ));
+  };
+
+  const addBlock = () => {
+    const newId = Math.max(...cvContent.map(b => b.id), 0) + 1;
+    setCvContent([...cvContent, { id: newId, type: 'text', content: 'New Section', style: { fontSize: '14px', color: '#000000', marginBottom: '8px' } }]);
+  };
+
   const downloadPDF = () => {
-    const element = document.getElementById('cv-preview');
+    const element = editorRef.current;
     const opt = {
-      margin: 0,
-      filename: 'edited-cv.pdf',
+      margin: 10,
+      filename: 'updated-cv.pdf',
       image: { type: 'jpeg', quality: 0.98 },
       html2canvas: { scale: 2, useCORS: true },
       jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
@@ -78,178 +101,151 @@ function App() {
     html2pdf().set(opt).from(element).save();
   };
 
-  // --- Render Helpers ---
-  const renderSection = (title, items) => (
-    <div style={{ marginBottom: '15px' }}>
-      <h3 style={{ borderBottom: '2px solid #2563eb', paddingBottom: '5px', color: '#1e3a8a', fontSize: '14px', textTransform: 'uppercase' }}>{title}</h3>
-      {items.map((item, idx) => (
-        <div key={idx} style={{ marginBottom: '10px' }}>
-          <textarea 
-            value={item} 
-            onChange={(e) => {
-              const newItems = [...items];
-              newItems[idx] = e.target.value;
-              // Logic to update state would go here (simplified for demo)
-            }}
-            style={{ width: '100%', border: 'none', background: 'transparent', resize: 'none', fontFamily: 'inherit', fontSize: 'inherit', color: 'inherit', outline: 'none' }}
-            rows={Math.max(2, item.split('\n').length)}
-          />
-        </div>
-      ))}
-    </div>
-  );
+  const toggleTheme = () => setDarkMode(!darkMode);
+
+  // Styles
+  const theme = {
+    bg: darkMode ? '#1a202c' : '#f7fafc',
+    card: darkMode ? '#2d3748' : '#ffffff',
+    text: darkMode ? '#e2e8f0' : '#2d3748',
+    textSec: darkMode ? '#a0aec0' : '#718096',
+    border: darkMode ? '#4a5568' : '#e2e8f0',
+    primary: '#3182ce'
+  };
 
   return (
-    <div className={`app-container ${darkMode ? 'dark' : 'light'}`} style={{ minHeight: '100vh', fontFamily: 'Inter, system-ui, sans-serif', background: darkMode ? '#111827' : '#f3f4f6', color: darkMode ? '#f9fafb' : '#1f2937', transition: 'all 0.3s ease' }}>
-      
+    <div style={{ minHeight: '100vh', background: theme.bg, color: theme.text, fontFamily: 'system-ui, sans-serif', transition: 'all 0.3s' }}>
       {/* Header */}
-      <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '1rem 2rem', background: darkMode ? '#1f2937' : '#ffffff', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <div style={{ width: '32px', height: '32px', background: '#2563eb', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 'bold' }}>CV</div>
-          <h1 style={{ fontSize: '1.25rem', fontWeight: '700' }}>Career Advisor Pro</h1>
+      <header style={{ background: theme.card, borderBottom: `1px solid ${theme.border}`, padding: '1rem 2rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', position: 'sticky', top: 0, zIndex: 100 }}>
+        <div>
+          <h1 style={{ fontSize: '1.5rem', fontWeight: 'bold', margin: 0 }}>CV Career Advisor</h1>
+          <p style={{ fontSize: '0.875rem', color: theme.textSec, margin: 0 }}>ATS Analysis & Smart Editor</p>
         </div>
         <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
-          {analysis && (
-            <nav style={{ display: 'flex', gap: '5px', background: darkMode ? '#374151' : '#f3f4f6', padding: '4px', borderRadius: '8px' }}>
-              <button onClick={() => setActiveTab('dashboard')} style={{ padding: '6px 12px', border: 'none', background: activeTab === 'dashboard' ? '#ffffff' : 'transparent', borderRadius: '6px', cursor: 'pointer', fontWeight: activeTab === 'dashboard' ? '600' : '400', color: activeTab === 'dashboard' ? '#2563eb' : 'inherit' }}>Analysis</button>
-              <button onClick={() => setActiveTab('editor')} style={{ padding: '6px 12px', border: 'none', background: activeTab === 'editor' ? '#ffffff' : 'transparent', borderRadius: '6px', cursor: 'pointer', fontWeight: activeTab === 'editor' ? '600' : '400', color: activeTab === 'editor' ? '#2563eb' : 'inherit' }}>Visual Editor</button>
-            </nav>
+          {result && (
+            <>
+              <button onClick={() => setActiveTab('analysis')} style={{ padding: '0.5rem 1rem', background: activeTab === 'analysis' ? theme.primary : 'transparent', color: activeTab === 'analysis' ? '#fff' : theme.text, border: 'none', borderRadius: '6px', cursor: 'pointer' }}>Analysis</button>
+              <button onClick={() => setActiveTab('editor')} style={{ padding: '0.5rem 1rem', background: activeTab === 'editor' ? theme.primary : 'transparent', color: activeTab === 'editor' ? '#fff' : theme.text, border: 'none', borderRadius: '6px', cursor: 'pointer' }}>Visual Editor</button>
+            </>
           )}
-          <button onClick={toggleTheme} style={{ background: 'transparent', border: '1px solid currentColor', borderRadius: '50%', width: '36px', height: '36px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <button onClick={toggleTheme} style={{ padding: '0.5rem', background: 'transparent', border: `1px solid ${theme.border}`, borderRadius: '50%', cursor: 'pointer', color: theme.text }} title="Toggle Theme">
             {darkMode ? '☀️' : '🌙'}
           </button>
         </div>
       </header>
 
-      {/* Main Content */}
-      <main style={{ padding: '2rem', maxWidth: '1400px', margin: '0 auto' }}>
-        
-        {!analysis ? (
-          <div style={{ textAlign: 'center', marginTop: '10vh' }}>
-            <h2 style={{ fontSize: '2rem', marginBottom: '1rem' }}>Upload your CV to start</h2>
-            <p style={{ marginBottom: '2rem', opacity: 0.7 }}>ATS Analysis, Gap Detection & Smart Editing</p>
-            <label style={{ display: 'inline-block', padding: '1rem 2rem', background: '#2563eb', color: 'white', borderRadius: '8px', cursor: 'pointer', fontWeight: '600', transition: 'transform 0.2s' }}>
-              Select PDF File
-              <input type="file" accept=".pdf" onChange={handleFileChange} style={{ display: 'none' }} />
-            </label>
-            {loading && <p style={{ marginTop: '1rem' }}>Analyzing document...</p>}
+      <main style={{ maxWidth: '1200px', margin: '0 auto', padding: '2rem' }}>
+        {!result ? (
+          /* Upload View */
+          <div style={{ background: theme.card, border: `2px dashed ${theme.border}`, borderRadius: '12px', padding: '4rem 2rem', textAlign: 'center' }}>
+            <h2 style={{ fontSize: '1.5rem', marginBottom: '1rem' }}>Upload your CV to start</h2>
+            <p style={{ color: theme.textSec, marginBottom: '2rem' }}>Get instant ATS analysis and edit your CV visually.</p>
+            <input type="file" accept=".pdf" onChange={handleFileChange} style={{ marginBottom: '1.5rem' }} />
+            <br />
+            <button onClick={handleUpload} disabled={!file || loading} style={{ padding: '0.75rem 2rem', background: loading ? '#9ca3af' : theme.primary, color: 'white', border: 'none', borderRadius: '8px', fontSize: '1rem', cursor: loading ? 'not-allowed' : 'pointer' }}>
+              {loading ? 'Analyzing...' : 'Analyze CV'}
+            </button>
+            {error && <div style={{ marginTop: '1rem', color: '#fc8181', background: '#742a2a', padding: '1rem', borderRadius: '6px' }}>{error}</div>}
           </div>
         ) : (
-          <>
-            {activeTab === 'dashboard' && (
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '2rem' }}>
+          /* Results View */
+          <div>
+            {activeTab === 'analysis' && (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '1.5rem' }}>
                 {/* Score Card */}
-                <div style={{ background: darkMode ? '#1f2937' : '#ffffff', padding: '2rem', borderRadius: '12px', boxShadow: '0 4px 6px rgba(0,0,0,0.05)', textAlign: 'center' }}>
-                  <div style={{ fontSize: '3rem', fontWeight: '800', color: analysis.issues.length === 0 ? '#10b981' : '#f59e0b' }}>
-                    {Math.max(0, 100 - (analysis.issues.length * 10))}%
+                <div style={{ background: theme.card, padding: '1.5rem', borderRadius: '12px', border: `1px solid ${theme.border}` }}>
+                  <h3 style={{ fontSize: '1.25rem', marginBottom: '1rem' }}>ATS Alignment Score</h3>
+                  <div style={{ fontSize: '3rem', fontWeight: 'bold', color: result.issues.length === 0 ? '#48bb78' : '#f56565' }}>
+                    {Math.max(0, 100 - (result.issues.length * 10))}%
                   </div>
-                  <div style={{ fontSize: '0.9rem', opacity: 0.7, textTransform: 'uppercase', letterSpacing: '1px' }}>ATS Alignment Score</div>
-                  <div style={{ marginTop: '1rem', display: 'flex', justifyContent: 'center', gap: '1rem' }}>
-                    <span style={{ color: '#10b981' }}>✓ {analysis.strengths.length} Strengths</span>
-                    <span style={{ color: '#ef4444' }}>✕ {analysis.issues.length} Issues</span>
-                  </div>
+                  <p style={{ color: theme.textSec }}>Based on 10 key standards</p>
                 </div>
-
-                {/* Issues List */}
-                <div style={{ gridColumn: 'span 1 / -1', background: darkMode ? '#1f2937' : '#ffffff', padding: '2rem', borderRadius: '12px', boxShadow: '0 4px 6px rgba(0,0,0,0.05)' }}>
-                  <h3 style={{ fontSize: '1.25rem', marginBottom: '1.5rem', borderBottom: '1px solid ' + (darkMode ? '#374151' : '#e5e7eb'), paddingBottom: '0.5rem' }}>Detected Issues & Fixes</h3>
-                  {analysis.issues.length === 0 ? (
-                    <p style={{ color: '#10b981' }}>No critical issues found! Your CV is well optimized.</p>
-                  ) : (
-                    <div style={{ display: 'grid', gap: '1.5rem' }}>
-                      {analysis.issues.map((issue, idx) => (
-                        <div key={idx} style={{ borderLeft: '4px solid ' + (issue.severity === 'critical' ? '#ef4444' : '#f59e0b'), paddingLeft: '1rem' }}>
-                          <h4 style={{ margin: '0 0 0.5rem 0' }}>{issue.title}</h4>
-                          <p style={{ opacity: 0.8, fontSize: '0.95rem' }}>{issue.description}</p>
-                          <div style={{ marginTop: '0.75rem', background: darkMode ? '#111827' : '#f9fafb', padding: '0.75rem', borderRadius: '6px' }}>
-                            <strong style={{ fontSize: '0.85rem', color: '#2563eb' }}>💡 Fix:</strong>
-                            <ul style={{ margin: '0.5rem 0 0 1.25rem', padding: 0, fontSize: '0.9rem' }}>
-                              {analysis.solutions[issue.id]?.map((sol, sIdx) => <li key={sIdx}>{sol}</li>)}
-                            </ul>
+                
+                {/* Issues */}
+                <div style={{ background: theme.card, padding: '1.5rem', borderRadius: '12px', border: `1px solid ${theme.border}`, gridColumn: 'span 1' }}>
+                  <h3 style={{ fontSize: '1.25rem', marginBottom: '1rem', color: '#f56565' }}>Issues Detected ({result.issues.length})</h3>
+                  {result.issues.length === 0 ? <p>No critical issues found!</p> : (
+                    <div style={{ maxHeight: '400px', overflowY: 'auto' }}>
+                      {result.issues.map((issue, idx) => (
+                        <div key={idx} style={{ marginBottom: '1rem', paddingBottom: '1rem', borderBottom: `1px solid ${theme.border}` }}>
+                          <div style={{ fontWeight: 'bold', marginBottom: '0.25rem' }}>{issue.title}</div>
+                          <p style={{ fontSize: '0.875rem', color: theme.textSec }}>{issue.description}</p>
+                          <div style={{ marginTop: '0.5rem', background: darkMode ? '#2d3748' : '#ebf8ff', padding: '0.5rem', borderRadius: '4px', fontSize: '0.875rem' }}>
+                            <strong>Fix:</strong> {result.solutions[issue.id]?.[0]}
                           </div>
                         </div>
                       ))}
                     </div>
                   )}
                 </div>
+
+                {/* Strengths */}
+                <div style={{ background: theme.card, padding: '1.5rem', borderRadius: '12px', border: `1px solid ${theme.border}` }}>
+                  <h3 style={{ fontSize: '1.25rem', marginBottom: '1rem', color: '#48bb78' }}>Strengths</h3>
+                  <ul style={{ listStyle: 'none', padding: 0 }}>
+                    {result.strengths.map((str, idx) => (
+                      <li key={idx} style={{ padding: '0.5rem 0', borderBottom: `1px solid ${theme.border}`, display: 'flex', alignItems: 'center' }}>
+                        <span style={{ color: '#48bb78', marginRight: '0.5rem' }}>✓</span> {str}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
               </div>
             )}
 
             {activeTab === 'editor' && (
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.5fr', gap: '2rem', height: 'calc(100vh - 150px)' }}>
-                {/* Left: Original Reference */}
-                <div style={{ background: darkMode ? '#1f2937' : '#ffffff', borderRadius: '12px', overflow: 'hidden', boxShadow: '0 4px 6px rgba(0,0,0,0.05)', display: 'flex', flexDirection: 'column' }}>
-                  <div style={{ padding: '1rem', borderBottom: '1px solid ' + (darkMode ? '#374151' : '#e5e7eb'), fontWeight: '600' }}>Original PDF (Reference)</div>
-                  <iframe src={pdfUrl} style={{ flex: 1, border: 'none', width: '100%' }} title="Original PDF" />
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2rem', height: 'calc(100vh - 150px)' }}>
+                {/* Left: Original PDF Reference */}
+                <div style={{ background: theme.card, borderRadius: '12px', border: `1px solid ${theme.border}`, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+                  <div style={{ padding: '1rem', borderBottom: `1px solid ${theme.border}`, fontWeight: 'bold' }}>Original PDF (Reference)</div>
+                  <iframe src={fileUrl} style={{ flex: 1, width: '100%', border: 'none' }} title="Original PDF" />
                 </div>
 
-                {/* Right: Live Editor */}
+                {/* Right: Editor */}
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <h3 style={{ margin: 0 }}>Live Editor (A4)</h3>
-                    <button onClick={downloadPDF} style={{ background: '#2563eb', color: 'white', border: 'none', padding: '8px 16px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}>Download PDF</button>
+                  {/* Toolbar */}
+                  <div style={{ background: theme.card, padding: '1rem', borderRadius: '12px', border: `1px solid ${theme.border}`, display: 'flex', gap: '1rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                    <button onClick={addBlock} style={{ padding: '0.5rem 1rem', background: theme.primary, color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer' }}>+ Add Section</button>
+                    {selectedBlock !== null && (
+                      <>
+                        <input type="color" value={cvContent.find(b => b.id === selectedBlock)?.style.color || '#000000'} onChange={(e) => updateStyle(selectedBlock, 'color', e.target.value)} title="Text Color" />
+                        <select value={cvContent.find(b => b.id === selectedBlock)?.style.fontSize || '14px'} onChange={(e) => updateStyle(selectedBlock, 'fontSize', e.target.value)} style={{ padding: '0.25rem' }}>
+                          <option value="12px">Small</option>
+                          <option value="14px">Normal</option>
+                          <option value="18px">Medium</option>
+                          <option value="24px">Large</option>
+                        </select>
+                        <button onClick={() => setCvContent(prev => prev.filter(b => b.id !== selectedBlock))} style={{ padding: '0.5rem', background: '#fc8181', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer' }}>Delete</button>
+                      </>
+                    )}
+                    <button onClick={downloadPDF} style={{ marginLeft: 'auto', padding: '0.5rem 1.5rem', background: '#48bb78', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>Download PDF</button>
                   </div>
-                  
-                  <div style={{ flex: 1, overflow: 'auto', background: '#525659', padding: '2rem', display: 'flex', justifyContent: 'center' }}>
-                    {/* A4 Paper Simulation */}
-                    <div id="cv-preview" style={{ 
-                      width: '210mm', 
-                      minHeight: '297mm', 
-                      background: 'white', 
-                      color: '#333', 
-                      padding: '20mm', 
-                      boxSizing: 'border-box', 
-                      boxShadow: '0 0 10px rgba(0,0,0,0.5)',
-                      fontFamily: 'Arial, sans-serif',
-                      fontSize: '11pt',
-                      lineHeight: '1.5'
-                    }}>
-                      {/* Editable Header */}
-                      <div style={{ textAlign: 'center', borderBottom: '2px solid #333', paddingBottom: '10px', marginBottom: '20px' }}>
-                        <input 
-                          defaultValue={analysis.rawText.split('\n')[0] || 'YOUR NAME'} 
-                          style={{ width: '100%', textAlign: 'center', fontSize: '24px', fontWeight: 'bold', border: 'none', outline: 'none', marginBottom: '5px' }} 
-                        />
-                        <input 
-                          defaultValue="Professional Title" 
-                          style={{ width: '100%', textAlign: 'center', fontSize: '14px', color: '#555', border: 'none', outline: 'none' }} 
-                        />
-                        <div style={{ fontSize: '12px', marginTop: '5px', color: '#666' }}>
-                          <input defaultValue="email@example.com | +1 234 567 890" style={{ width: '100%', textAlign: 'center', border: 'none', outline: 'none', background: 'transparent' }} />
-                        </div>
-                      </div>
 
-                      {/* Editable Summary */}
-                      <div style={{ marginBottom: '20px' }}>
-                        <h4 style={{ textTransform: 'uppercase', fontSize: '12px', borderBottom: '1px solid #ccc', marginBottom: '10px' }}>Professional Summary</h4>
-                        <textarea 
-                          defaultValue={cvData.summary} 
-                          style={{ width: '100%', border: 'none', outline: 'none', resize: 'none', fontFamily: 'inherit', fontSize: 'inherit', minHeight: '80px' }} 
-                        />
-                      </div>
-
-                      {/* Editable Experience (Static Demo Structure) */}
-                      <div style={{ marginBottom: '20px' }}>
-                        <h4 style={{ textTransform: 'uppercase', fontSize: '12px', borderBottom: '1px solid #ccc', marginBottom: '10px' }}>Experience</h4>
-                        <div style={{ marginBottom: '15px' }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 'bold' }}>
-                            <input defaultValue="Job Title" style={{ border: 'none', outline: 'none', fontWeight: 'bold', width: '50%' }} />
-                            <input defaultValue="Date Range" style={{ border: 'none', outline: 'none', textAlign: 'right' }} />
-                          </div>
-                          <input defaultValue="Company Name" style={{ border: 'none', outline: 'none', fontStyle: 'italic', width: '100%', marginBottom: '5px' }} />
-                          <textarea defaultValue="- Achieved X% growth..." style={{ width: '100%', border: 'none', outline: 'none', resize: 'none', fontFamily: 'inherit', fontSize: 'inherit' }} rows={3} />
+                  {/* A4 Canvas */}
+                  <div style={{ flex: 1, overflowY: 'auto', background: '#525659', padding: '2rem', display: 'flex', justifyContent: 'center' }}>
+                    <div ref={editorRef} style={{ width: '210mm', minHeight: '297mm', background: 'white', padding: '20mm', boxShadow: '0 0 10px rgba(0,0,0,0.5)', color: '#000' }}>
+                      {cvContent.map((block) => (
+                        <div key={block.id} onClick={() => setSelectedBlock(block.id)} style={{ 
+                          ...block.style, 
+                          padding: '4px', 
+                          border: selectedBlock === block.id ? '2px solid #3182ce' : '1px solid transparent',
+                          cursor: 'text',
+                          whiteSpace: 'pre-wrap'
+                        }}>
+                          <textarea 
+                            value={block.content} 
+                            onChange={(e) => updateBlock(block.id, 'content', e.target.value)}
+                            style={{ width: '100%', border: 'none', resize: 'none', font: 'inherit', color: 'inherit', background: 'transparent', outline: 'none', overflow: 'hidden' }}
+                            rows={block.content.split('\n').length}
+                          />
                         </div>
-                      </div>
-                      
-                      <div style={{ textAlign: 'center', color: '#999', fontSize: '10px', marginTop: '20px' }}>
-                        * Click on any text above to edit. Layout is fixed to A4.
-                      </div>
+                      ))}
                     </div>
                   </div>
                 </div>
               </div>
             )}
-          </>
+          </div>
         )}
       </main>
     </div>
