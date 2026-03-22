@@ -1,6 +1,5 @@
 {
   "name": "cv-career-advisor-frontend",
-  "private": true,
   "version": "1.0.0",
   "type": "module",
   "scripts": {
@@ -11,7 +10,8 @@
   "dependencies": {
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
-    "html2pdf.js": "^0.10.1"
+    "html2pdf.js": "^0.10.1",
+    "pdfjs-dist": "^4.0.267"
   },
   "devDependencies": {
     "@types/react": "^18.2.43",
