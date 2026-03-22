@@ -1,379 +1,241 @@
 import { useState, useRef, useEffect } from 'react';
+import { pdfjs } from 'pdfjs-dist';
 import html2pdf from 'html2pdf.js';
+
+// Set worker source for PDF.js
+pdfjs.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjs.version}/pdf.worker.min.js`;
 
 function App() {
   const [file, setFile] = useState(null);
-  const [result, setResult] = useState(null);
+  const [pdfFile, setPdfFile] = useState(null);
+  const [pages, setPages] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [activeTab, setActiveTab] = useState('analysis'); // 'analysis', 'editor', 'raw'
-  const [theme, setTheme] = useState('light');
+  const [activeTab, setActiveTab] = useState('analysis'); // analysis, editor
   
   // Editor State
-  const [cvContent, setCvContent] = useState('');
-  const cvRef = useRef(null);
+  const [textBlocks, setTextBlocks] = useState([]);
+  const [selectedBlock, setSelectedBlock] = useState(null);
+  const containerRef = useRef(null);
 
-  // Toggle Theme
-  const toggleTheme = () => {
-    setTheme(theme === 'light' ? 'dark' : 'light');
-  };
+  const handleFileChange = async (e) => {
+    const selectedFile = e.target.files[0];
+    if (!selectedFile) return;
 
-  const handleFileChange = (e) => {
-    if (e.target.files[0]) {
-      setFile(e.target.files[0]);
-      setError('');
-      setResult(null);
-      setActiveTab('analysis');
-    }
-  };
-
-  const handleUpload = async () => {
-    if (!file) return;
+    setFile(selectedFile);
     setLoading(true);
     setError('');
-    setResult(null);
-
-    const formData = new FormData();
-    formData.append('cv', file);
-
+    setTextBlocks([]);
+    
     try {
-      const response = await fetch('/api/upload-cv', {
-        method: 'POST',
-        body: formData,
-      });
-
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.details || 'Failed to upload');
+      const arrayBuffer = await selectedFile.arrayBuffer();
+      const pdf = await pdfjs.getDocument(arrayBuffer).promise;
+      setPdfFile(pdf);
       
-      setResult(data);
-      setCvContent(data.rawText); // Load raw text into editor
-      setActiveTab('analysis');
+      const pagePromises = [];
+      for (let i = 1; i <= pdf.numPages; i++) {
+        pagePromises.push(pdf.getPage(i));
+      }
+      const loadedPages = await Promise.all(pagePromises);
+      setPages(loadedPages);
+      
+      // Auto-switch to editor if file loaded
+      if (loadedPages.length > 0) {
+        setActiveTab('editor');
+      }
     } catch (err) {
-      setError(err.message);
+      setError('Failed to load PDF. Ensure it is a valid file.');
+      console.error(err);
     } finally {
       setLoading(false);
     }
   };
 
+  const handlePageRender = async (page, index) => {
+    const canvas = document.getElementById(`page-canvas-${index}`);
+    if (!canvas) return;
+
+    const viewport = page.getViewport({ scale: 1.5 }); // High res for editing
+    const context = canvas.getContext('2d');
+    canvas.height = viewport.height;
+    canvas.width = viewport.width;
+
+    await page.render({
+      canvasContext: context,
+      viewport: viewport
+    }).promise;
+    
+    return viewport;
+  };
+
+  const addTextBlock = (e, pageIndex) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+
+    const newBlock = {
+      id: Date.now(),
+      page: pageIndex,
+      x,
+      y,
+      text: 'New Text',
+      fontSize: 12,
+      fontFamily: 'Arial',
+      color: '#000000',
+      fontWeight: 'normal'
+    };
+    setTextBlocks([...textBlocks, newBlock]);
+    setSelectedBlock(newBlock.id);
+  };
+
+  const updateBlock = (id, field, value) => {
+    setTextBlocks(blocks => blocks.map(b => b.id === id ? { ...b, [field]: value } : b));
+  };
+
   const downloadPDF = () => {
-    const element = cvRef.current;
+    const element = containerRef.current;
     const opt = {
-      margin:       [10, 10, 10, 10], // mm
-      filename:     'edited-cv.pdf',
-      image:        { type: 'jpeg', quality: 0.98 },
-      html2canvas:  { scale: 2, useCORS: true },
-      jsPDF:        { unit: 'mm', format: 'a4', orientation: 'portrait' }
+      margin: 0,
+      filename: 'edited-cv.pdf',
+      image: { type: 'jpeg', quality: 0.98 },
+      html2canvas: { scale: 2, useCORS: true },
+      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
     };
     
-    // Use html2pdf to convert the DOM element to PDF
-    html2pdf().set(opt).from(element).save();
+    // Temporarily hide controls for clean print
+    const controls = document.querySelectorAll('.editor-controls');
+    controls.forEach(el => el.style.display = 'none');
+    
+    html2pdf().set(opt).from(element).save().then(() => {
+      controls.forEach(el => el.style.display = 'flex');
+    });
   };
-
-  const getSeverityColor = (severity) => {
-    if (severity === 'critical') return '#dc3545';
-    if (severity === 'high') return '#fd7e14';
-    return '#ffc107';
-  };
-
-  const themeStyles = theme === 'dark' 
-    ? { bg: '#1a202c', text: '#f7fafc', card: '#2d3748', border: '#4a5568' }
-    : { bg: '#f3f4f6', text: '#1f2937', card: '#ffffff', border: '#e5e7eb' };
 
   return (
-    <div style={{ 
-      minHeight: '100vh', 
-      background: themeStyles.bg, 
-      color: themeStyles.text, 
-      fontFamily: 'system-ui, sans-serif',
-      transition: 'all 0.3s ease'
-    }}>
-      {/* Header */}
-      <header style={{ 
-        padding: '1.5rem 2rem', 
-        borderBottom: `1px solid ${themeStyles.border}`,
-        display: 'flex', 
-        justifyContent: 'space-between', 
-        alignItems: 'center',
-        background: themeStyles.card
-      }}>
-        <div>
-          <h1 style={{ margin: 0, fontSize: '1.5rem', fontWeight: 'bold' }}>CV Career Advisor</h1>
-          <p style={{ margin: '0.25rem 0 0', opacity: 0.7, fontSize: '0.9rem' }}>Analyze, Edit, and Optimize your CV</p>
-        </div>
-        <button 
-          onClick={toggleTheme}
-          style={{
-            background: 'transparent',
-            border: `1px solid ${themeStyles.border}`,
-            color: themeStyles.text,
-            padding: '8px 12px',
-            borderRadius: '6px',
-            cursor: 'pointer',
-            fontSize: '1.2rem'
-          }}
-          title="Toggle Theme"
-        >
-          {theme === 'light' ? '🌙' : '☀️'}
-        </button>
+    <div style={{ padding: '20px', fontFamily: 'system-ui, sans-serif', maxWidth: '1200px', margin: '0 auto' }}>
+      <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+        <h1>CV Visual Editor</h1>
+        <input type="file" accept=".pdf" onChange={handleFileChange} />
       </header>
 
-      <main style={{ maxWidth: '1000px', margin: '0 auto', padding: '2rem' }}>
-        
-        {/* Upload Section */}
-        {!result && (
-          <div style={{ 
-            border: `2px dashed ${themeStyles.border}`, 
-            padding: '3rem', 
-            textAlign: 'center', 
-            borderRadius: '12px', 
-            background: themeStyles.card 
-          }}>
-            <h2 style={{ marginBottom: '1rem' }}>Upload your CV (PDF)</h2>
-            <input 
-              type="file" 
-              accept=".pdf" 
-              onChange={handleFileChange} 
-              style={{ marginBottom: '1.5rem', fontSize: '1rem' }} 
-            />
-            <br />
+      {error && <div style={{ color: 'red', padding: '10px', background: '#ffe6e6' }}>{error}</div>}
+
+      {loading && <div>Loading PDF Engine...</div>}
+
+      {pages.length > 0 && (
+        <div style={{ display: 'flex', gap: '20px', marginTop: '20px' }}>
+          
+          {/* Toolbar */}
+          <div className="editor-controls" style={{ width: '300px', padding: '20px', background: '#f8f9fa', borderRadius: '8px', height: 'fit-content' }}>
+            <h3>Tools</h3>
+            <p style={{fontSize: '0.9rem', color: '#666'}}>Click anywhere on the CV to add/edit text.</p>
+            
+            {selectedBlock ? (
+              <div style={{ borderTop: '1px solid #ddd', paddingTop: '15px' }}>
+                <h4>Edit Selected Text</h4>
+                {textBlocks.filter(b => b.id === selectedBlock).map(block => (
+                  <div key={block.id} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    <textarea 
+                      value={block.text} 
+                      onChange={(e) => updateBlock(block.id, 'text', e.target.value)}
+                      rows={3}
+                      style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }}
+                    />
+                    <label>Font Size: {block.fontSize}px</label>
+                    <input 
+                      type="range" min="8" max="72" 
+                      value={block.fontSize} 
+                      onChange={(e) => updateBlock(block.id, 'fontSize', parseInt(e.target.value))} 
+                    />
+                    <label>Color</label>
+                    <input 
+                      type="color" 
+                      value={block.color} 
+                      onChange={(e) => updateBlock(block.id, 'color', e.target.value)} 
+                    />
+                    <label>Font Family</label>
+                    <select 
+                      value={block.fontFamily} 
+                      onChange={(e) => updateBlock(block.id, 'fontFamily', e.target.value)}
+                      style={{ padding: '5px' }}
+                    >
+                      <option value="Arial">Arial</option>
+                      <option value="Times New Roman">Times New Roman</option>
+                      <option value="Calibri">Calibri</option>
+                      <option value="Helvetica">Helvetica</option>
+                      <option value="Georgia">Georgia</option>
+                      <option value="Courier New">Courier New</option>
+                    </select>
+                    <button 
+                      onClick={() => setTextBlocks(textBlocks.filter(b => b.id !== block.id))}
+                      style={{ background: '#dc3545', color: 'white', border: 'none', padding: '8px', cursor: 'pointer', marginTop: '10px' }}
+                    >
+                      Delete Text
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p style={{color: '#999', fontStyle: 'italic'}}>Select a text box to edit properties</p>
+            )}
+
             <button 
-              onClick={handleUpload} 
-              disabled={!file || loading}
-              style={{ 
-                padding: '12px 32px', 
-                background: loading ? '#9ca3af' : '#2563eb', 
-                color: 'white', 
-                border: 'none', 
-                borderRadius: '8px', 
-                cursor: loading ? 'not-allowed' : 'pointer',
-                fontSize: '1rem',
-                fontWeight: 'bold',
-                transition: 'background 0.2s'
-              }}
+              onClick={downloadPDF}
+              style={{ width: '100%', marginTop: '20px', padding: '12px', background: '#28a745', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}
             >
-              {loading ? 'Analyzing...' : 'Start Analysis'}
+              Download Edited PDF
             </button>
           </div>
-        )}
 
-        {error && (
-          <div style={{ 
-            marginTop: '1rem', 
-            color: '#fee2e2', 
-            background: '#991b1b', 
-            padding: '1rem', 
-            borderRadius: '8px' 
-          }}>
-            <strong>Error:</strong> {error}
-          </div>
-        )}
-
-        {/* Dashboard */}
-        {result && (
-          <div>
-            {/* Tabs */}
-            <div style={{ 
-              display: 'flex', 
-              gap: '0.5rem', 
-              marginBottom: '1.5rem',
-              borderBottom: `1px solid ${themeStyles.border}`,
-              paddingBottom: '0.5rem'
-            }}>
-              <button 
-                onClick={() => setActiveTab('analysis')}
-                style={{ 
-                  padding: '8px 16px', 
-                  background: activeTab === 'analysis' ? '#2563eb' : 'transparent', 
-                  color: activeTab === 'analysis' ? 'white' : themeStyles.text, 
-                  border: 'none', 
-                  borderRadius: '6px', 
-                  cursor: 'pointer',
-                  fontWeight: activeTab === 'analysis' ? 'bold' : 'normal'
-                }}
-              >
-                📊 Analysis & Gaps
-              </button>
-              <button 
-                onClick={() => setActiveTab('editor')}
-                style={{ 
-                  padding: '8px 16px', 
-                  background: activeTab === 'editor' ? '#2563eb' : 'transparent', 
-                  color: activeTab === 'editor' ? 'white' : themeStyles.text, 
-                  border: 'none', 
-                  borderRadius: '6px', 
-                  cursor: 'pointer',
-                  fontWeight: activeTab === 'editor' ? 'bold' : 'normal'
-                }}
-              >
-                ✏️ Visual Editor
-              </button>
-            </div>
-
-            {/* Analysis Tab */}
-            {activeTab === 'analysis' && (
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
-                {/* Issues */}
-                <div style={{ background: themeStyles.card, padding: '1.5rem', borderRadius: '12px', border: `1px solid ${themeStyles.border}` }}>
-                  <h3 style={{ marginTop: 0, color: '#ef4444' }}>⚠️ Issues & Gaps</h3>
-                  {result.issues.length === 0 ? (
-                    <p>No critical issues found!</p>
-                  ) : (
-                    result.issues.map((issue, idx) => (
-                      <div key={idx} style={{ marginBottom: '1.5rem', paddingBottom: '1.5rem', borderBottom: `1px solid ${themeStyles.border}` }}>
-                        <div style={{ display: 'flex', alignItems: 'center', marginBottom: '0.5rem' }}>
-                          <span style={{ 
-                            width: '10px', height: '10px', borderRadius: '50%', 
-                            background: getSeverityColor(issue.severity), 
-                            marginRight: '10px' 
-                          }}></span>
-                          <strong>{issue.title}</strong>
-                        </div>
-                        <p style={{ fontSize: '0.9rem', opacity: 0.8 }}>{issue.description}</p>
-                        <div style={{ background: theme === 'dark' ? '#2d3748' : '#eff6ff', padding: '0.75rem', borderRadius: '6px', marginTop: '0.5rem' }}>
-                          <strong style={{ fontSize: '0.85rem', display: 'block', marginBottom: '0.25rem' }}>💡 Fix:</strong>
-                          <ul style={{ margin: 0, paddingLeft: '1.2rem', fontSize: '0.85rem' }}>
-                            {result.solutions[issue.id]?.map((sol, sIdx) => (
-                              <li key={sIdx} style={{ marginBottom: '0.25rem' }}>{sol}</li>
-                            ))}
-                          </ul>
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </div>
-
-                {/* Strengths */}
-                <div style={{ background: themeStyles.card, padding: '1.5rem', borderRadius: '12px', border: `1px solid ${themeStyles.border}` }}>
-                  <h3 style={{ marginTop: 0, color: '#10b981' }}>✅ Strengths</h3>
-                  <ul style={{ listStyle: 'none', padding: 0 }}>
-                    {result.strengths.map((str, idx) => (
-                      <li key={idx} style={{ 
-                        padding: '0.75rem', 
-                        background: theme === 'dark' ? '#064e3b' : '#ecfdf5', 
-                        borderLeft: '4px solid #10b981', 
-                        marginBottom: '0.75rem',
-                        borderRadius: '0 4px 4px 0'
-                      }}>
-                        {str}
-                      </li>
-                    ))}
-                  </ul>
-                  
-                  {/* Alignment Score */}
-                  <div style={{ marginTop: '2rem', textAlign: 'center' }}>
-                    <div style={{ fontSize: '2.5rem', fontWeight: 'bold', color: result.issues.length < 3 ? '#10b981' : '#f59e0b' }}>
-                      {Math.max(0, 100 - (result.issues.length * 10))}%
-                    </div>
-                    <div style={{ opacity: 0.7 }}>ATS Alignment Score</div>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Visual Editor Tab */}
-            {activeTab === 'editor' && (
-              <div style={{ display: 'grid', gridTemplateColumns: '300px 1fr', gap: '1.5rem', alignItems: 'start' }}>
+          {/* Canvas Area */}
+          <div ref={containerRef} style={{ flex: 1, overflow: 'auto', background: '#555', padding: '20px', borderRadius: '8px' }}>
+            {pages.map((page, index) => (
+              <div key={index} style={{ position: 'relative', margin: '0 auto 20px auto', boxShadow: '0 4px 10px rgba(0,0,0,0.5)' }}>
+                {/* Render PDF Page as Background Image */}
+                <canvas 
+                  id={`page-canvas-${index}`} 
+                  onLoad={() => handlePageRender(page, index)}
+                  style={{ display: 'block', maxWidth: '100%' }}
+                />
                 
-                {/* Controls */}
-                <div style={{ background: themeStyles.card, padding: '1.5rem', borderRadius: '12px', border: `1px solid ${themeStyles.border}` }}>
-                  <h3 style={{ marginTop: 0 }}>Editor Controls</h3>
-                  <p style={{ fontSize: '0.9rem', opacity: 0.8, marginBottom: '1rem' }}>
-                    Edit the text directly on the A4 preview on the right. Changes save automatically.
-                  </p>
-                  
-                  <div style={{ marginBottom: '1rem' }}>
-                    <label style={{ display: 'block', fontSize: '0.85rem', marginBottom: '0.25rem', fontWeight: 'bold' }}>Font Family</label>
-                    <select 
-                      onChange={(e) => {
-                        if(cvRef.current) cvRef.current.style.fontFamily = e.target.value;
+                {/* Interactive Overlay Layer */}
+                <div 
+                  style={{ 
+                    position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', 
+                    cursor: 'text' 
+                  }}
+                  onClick={(e) => addTextBlock(e, index)}
+                >
+                  {textBlocks.filter(b => b.page === index).map(block => (
+                    <div
+                      key={block.id}
+                      onClick={(e) => { e.stopPropagation(); setSelectedBlock(block.id); }}
+                      style={{
+                        position: 'absolute',
+                        left: block.x,
+                        top: block.y,
+                        fontSize: `${block.fontSize}px`,
+                        fontFamily: block.fontFamily,
+                        color: block.color,
+                        fontWeight: block.fontWeight,
+                        border: selectedBlock === block.id ? '2px dashed #007bff' : '1px solid transparent',
+                        padding: '2px',
+                        minWidth: '50px',
+                        backgroundColor: selectedBlock === block.id ? 'rgba(0, 123, 255, 0.1)' : 'transparent',
+                        cursor: 'move',
+                        whiteSpace: 'pre-wrap',
+                        zIndex: 10
                       }}
-                      style={{ width: '100%', padding: '8px', borderRadius: '4px', border: `1px solid ${themeStyles.border}` }}
                     >
-                      <option value="Arial, sans-serif">Arial</option>
-                      <option value="'Times New Roman', serif">Times New Roman</option>
-                      <option value="Georgia, serif">Georgia</option>
-                      <option value="'Courier New', monospace">Courier New</option>
-                      <option value="Verdana, sans-serif">Verdana</option>
-                    </select>
-                  </div>
-
-                  <div style={{ marginBottom: '1rem' }}>
-                    <label style={{ display: 'block', fontSize: '0.85rem', marginBottom: '0.25rem', fontWeight: 'bold' }}>Text Color</label>
-                    <input 
-                      type="color" 
-                      defaultValue="#000000"
-                      onChange={(e) => {
-                        if(cvRef.current) cvRef.current.style.color = e.target.value;
-                      }}
-                      style={{ width: '100%', height: '40px', border: 'none', cursor: 'pointer' }}
-                    />
-                  </div>
-
-                  <div style={{ marginBottom: '1rem' }}>
-                    <label style={{ display: 'block', fontSize: '0.85rem', marginBottom: '0.25rem', fontWeight: 'bold' }}>Background Color</label>
-                    <input 
-                      type="color" 
-                      defaultValue="#ffffff"
-                      onChange={(e) => {
-                        if(cvRef.current) cvRef.current.style.background = e.target.value;
-                      }}
-                      style={{ width: '100%', height: '40px', border: 'none', cursor: 'pointer' }}
-                    />
-                  </div>
-
-                  <button 
-                    onClick={downloadPDF}
-                    style={{ 
-                      width: '100%', 
-                      padding: '12px', 
-                      background: '#059669', 
-                      color: 'white', 
-                      border: 'none', 
-                      borderRadius: '6px', 
-                      cursor: 'pointer',
-                      fontWeight: 'bold',
-                      marginTop: '1rem'
-                    }}
-                  >
-                    📥 Download PDF
-                  </button>
-                </div>
-
-                {/* A4 Preview Area */}
-                <div style={{ 
-                  background: '#525659', 
-                  padding: '2rem', 
-                  borderRadius: '12px', 
-                  overflow: 'auto',
-                  display: 'flex',
-                  justifyContent: 'center'
-                }}>
-                  <div 
-                    ref={cvRef}
-                    contentEditable
-                    suppressContentEditableWarning
-                    style={{
-                      width: '210mm',
-                      minHeight: '297mm',
-                      padding: '20mm',
-                      background: 'white',
-                      color: 'black',
-                      fontFamily: 'Arial, sans-serif',
-                      fontSize: '11pt',
-                      lineHeight: '1.5',
-                      outline: 'none',
-                      boxShadow: '0 0 10px rgba(0,0,0,0.5)',
-                      whiteSpace: 'pre-wrap'
-                    }}
-                  >
-                    {cvContent}
-                  </div>
+                      {block.text}
+                    </div>
+                  ))}
                 </div>
               </div>
-            )}
+            ))}
           </div>
-        )}
-      </main>
+        </div>
+      )}
     </div>
   );
 }
