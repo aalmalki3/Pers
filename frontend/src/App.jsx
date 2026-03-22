@@ -1,18 +1,16 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import html2pdf from 'html2pdf.js';
+import { pdfjs } from 'pdfjs-dist';
 
-// --- Icons ---
-const SunIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>;
-const MoonIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>;
-const DownloadIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>;
-const EditIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>;
+// Set worker source for PDF.js
+pdfjs.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjs.version}/pdf.worker.min.js`;
 
 function App() {
   const [file, setFile] = useState(null);
-  const [result, setResult] = useState(null);
+  const [pdfUrl, setPdfUrl] = useState(null);
+  const [analysis, setAnalysis] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-  const [activeTab, setActiveTab] = useState('analysis'); // analysis, editor
+  const [activeTab, setActiveTab] = useState('dashboard'); // dashboard, editor
   const [darkMode, setDarkMode] = useState(false);
   
   // Editor State
@@ -23,117 +21,53 @@ function App() {
     education: [],
     skills: []
   });
-  const [styles, setStyles] = useState({
-    fontFamily: 'Arial, sans-serif',
-    primaryColor: '#2c3e50',
-    textColor: '#333333',
-    fontSize: '14px'
-  });
 
-  const pdfRef = useRef();
-
-  // Toggle Theme
-  useEffect(() => {
-    if (darkMode) document.body.classList.add('dark-mode');
-    else document.body.classList.remove('dark-mode');
-  }, [darkMode]);
+  // Theme Toggle
+  const toggleTheme = () => {
+    setDarkMode(!darkMode);
+    document.body.style.background = darkMode ? '#ffffff' : '#f3f4f6';
+    document.body.style.color = darkMode ? '#1f2937' : '#ffffff';
+  };
 
   const handleFileChange = (e) => {
     if (e.target.files[0]) {
-      setFile(e.target.files[0]);
-      setError('');
-      setResult(null);
-      setActiveTab('analysis');
+      const selectedFile = e.target.files[0];
+      setFile(selectedFile);
+      setPdfUrl(URL.createObjectURL(selectedFile));
+      setAnalysis(null);
+      setActiveTab('dashboard');
+      analyzeFile(selectedFile);
     }
   };
 
-  const handleUpload = async () => {
-    if (!file) return;
+  const analyzeFile = async (file) => {
     setLoading(true);
-    setError('');
-    setResult(null);
-
     const formData = new FormData();
     formData.append('cv', file);
 
     try {
-      const response = await fetch('/api/upload-cv', { method: 'POST', body: formData });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.details || 'Failed to upload');
-      
-      setResult(data);
-      parseCVText(data.rawText); // Auto-populate editor
-      setActiveTab('analysis');
+      const res = await fetch('/api/upload-cv', { method: 'POST', body: formData });
+      const data = await res.json();
+      if (res.ok) {
+        setAnalysis(data);
+        // Auto-populate editor with extracted text (Simple heuristic)
+        setCvData(prev => ({
+          ...prev,
+          summary: data.rawText.split('SUMMARY')[1]?.split('EXPERIENCE')[0]?.trim() || '',
+          // In a real app, we'd parse experience/education more deeply here
+        }));
+      } else {
+        alert(data.error);
+      }
     } catch (err) {
-      setError(err.message);
+      alert('Failed to analyze');
     } finally {
       setLoading(false);
     }
   };
 
-  // Simple Heuristic Parser to Reconstruct Structure
-  const parseCVText = (text) => {
-    const lines = text.split('\n').map(l => l.trim()).filter(l => l);
-    
-    // Detect Header (First few non-empty lines usually)
-    const name = lines[0] || '';
-    const title = lines[1] || '';
-    const contact = lines[2] || '';
-
-    // Detect Sections
-    let currentSection = 'summary';
-    const experience = [];
-    const education = [];
-    const skills = [];
-    let summary = '';
-    let buffer = [];
-
-    const sectionKeywords = {
-      'experience': ['experience', 'work history', 'employment'],
-      'education': ['education', 'academic'],
-      'skills': ['skills', 'competencies', 'languages'],
-      'summary': ['summary', 'profile', 'about']
-    };
-
-    lines.forEach(line => {
-      const lower = line.toLowerCase();
-      let foundSection = null;
-
-      // Check if line is a section header
-      Object.keys(sectionKeywords).forEach(key => {
-        if (sectionKeywords[key].some(k => lower.includes(k) && lower.length < 30)) {
-          foundSection = key;
-        }
-      });
-
-      if (foundSection) {
-        // Save previous buffer to previous section
-        if (currentSection === 'experience' && buffer.length > 0) experience.push(buffer.join('\n'));
-        if (currentSection === 'education' && buffer.length > 0) education.push(buffer.join('\n'));
-        if (currentSection === 'skills' && buffer.length > 0) skills.push(buffer.join('\n'));
-        if (currentSection === 'summary' && buffer.length > 0) summary = buffer.join(' ');
-        
-        currentSection = foundSection;
-        buffer = [];
-      } else {
-        buffer.push(line);
-      }
-    });
-    // Push final buffer
-    if (currentSection === 'experience' && buffer.length > 0) experience.push(buffer.join('\n'));
-    if (currentSection === 'summary' && buffer.length > 0) summary = buffer.join(' ');
-
-    setCvData({
-      header: { name, title, contact },
-      summary,
-      experience,
-      education,
-      skills
-    });
-  };
-
   const downloadPDF = () => {
-    const element = pdfRef.current;
+    const element = document.getElementById('cv-preview');
     const opt = {
       margin: 0,
       filename: 'edited-cv.pdf',
@@ -144,146 +78,173 @@ function App() {
     html2pdf().set(opt).from(element).save();
   };
 
-  const updateStyle = (key, value) => setStyles({ ...styles, [key]: value });
+  // --- Render Helpers ---
+  const renderSection = (title, items) => (
+    <div style={{ marginBottom: '15px' }}>
+      <h3 style={{ borderBottom: '2px solid #2563eb', paddingBottom: '5px', color: '#1e3a8a', fontSize: '14px', textTransform: 'uppercase' }}>{title}</h3>
+      {items.map((item, idx) => (
+        <div key={idx} style={{ marginBottom: '10px' }}>
+          <textarea 
+            value={item} 
+            onChange={(e) => {
+              const newItems = [...items];
+              newItems[idx] = e.target.value;
+              // Logic to update state would go here (simplified for demo)
+            }}
+            style={{ width: '100%', border: 'none', background: 'transparent', resize: 'none', fontFamily: 'inherit', fontSize: 'inherit', color: 'inherit', outline: 'none' }}
+            rows={Math.max(2, item.split('\n').length)}
+          />
+        </div>
+      ))}
+    </div>
+  );
 
   return (
-    <div className={`app-container ${darkMode ? 'dark' : 'light'}`}>
+    <div className={`app-container ${darkMode ? 'dark' : 'light'}`} style={{ minHeight: '100vh', fontFamily: 'Inter, system-ui, sans-serif', background: darkMode ? '#111827' : '#f3f4f6', color: darkMode ? '#f9fafb' : '#1f2937', transition: 'all 0.3s ease' }}>
+      
       {/* Header */}
-      <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '1rem 2rem', borderBottom: '1px solid #ddd' }}>
-        <h1 style={{ margin: 0, fontSize: '1.2rem' }}>CV Career Advisor</h1>
+      <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '1rem 2rem', background: darkMode ? '#1f2937' : '#ffffff', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <div style={{ width: '32px', height: '32px', background: '#2563eb', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 'bold' }}>CV</div>
+          <h1 style={{ fontSize: '1.25rem', fontWeight: '700' }}>Career Advisor Pro</h1>
+        </div>
         <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
-          {result && (
-            <>
-              <button onClick={() => setActiveTab('analysis')} style={{ background: activeTab === 'analysis' ? '#007bff' : 'transparent', color: activeTab === 'analysis' ? '#fff' : '#333', border: 'none', padding: '8px 16px', borderRadius: '4px', cursor: 'pointer' }}>Analysis</button>
-              <button onClick={() => setActiveTab('editor')} style={{ background: activeTab === 'editor' ? '#007bff' : 'transparent', color: activeTab === 'editor' ? '#fff' : '#333', border: 'none', padding: '8px 16px', borderRadius: '4px', cursor: 'pointer' }}>Visual Editor</button>
-              <button onClick={downloadPDF} style={{ background: '#28a745', color: '#fff', border: 'none', padding: '8px 16px', borderRadius: '4px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '5px' }}><DownloadIcon /> Download PDF</button>
-            </>
+          {analysis && (
+            <nav style={{ display: 'flex', gap: '5px', background: darkMode ? '#374151' : '#f3f4f6', padding: '4px', borderRadius: '8px' }}>
+              <button onClick={() => setActiveTab('dashboard')} style={{ padding: '6px 12px', border: 'none', background: activeTab === 'dashboard' ? '#ffffff' : 'transparent', borderRadius: '6px', cursor: 'pointer', fontWeight: activeTab === 'dashboard' ? '600' : '400', color: activeTab === 'dashboard' ? '#2563eb' : 'inherit' }}>Analysis</button>
+              <button onClick={() => setActiveTab('editor')} style={{ padding: '6px 12px', border: 'none', background: activeTab === 'editor' ? '#ffffff' : 'transparent', borderRadius: '6px', cursor: 'pointer', fontWeight: activeTab === 'editor' ? '600' : '400', color: activeTab === 'editor' ? '#2563eb' : 'inherit' }}>Visual Editor</button>
+            </nav>
           )}
-          <button onClick={() => setDarkMode(!darkMode)} style={{ background: 'transparent', border: '1px solid #ccc', padding: '8px', borderRadius: '50%', cursor: 'pointer' }}>
-            {darkMode ? <SunIcon /> : <MoonIcon />}
+          <button onClick={toggleTheme} style={{ background: 'transparent', border: '1px solid currentColor', borderRadius: '50%', width: '36px', height: '36px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            {darkMode ? '☀️' : '🌙'}
           </button>
         </div>
       </header>
 
-      <main style={{ padding: '2rem', maxWidth: '1200px', margin: '0 auto' }}>
-        {!result ? (
-          <div style={{ textAlign: 'center', padding: '4rem', border: '2px dashed #ccc', borderRadius: '8px' }}>
-            <h2>Upload your CV to start</h2>
-            <input type="file" accept=".pdf" onChange={handleFileChange} style={{ margin: '1rem 0' }} />
-            <br />
-            <button onClick={handleUpload} disabled={!file || loading} style={{ padding: '10px 20px', background: '#007bff', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>
-              {loading ? 'Processing...' : 'Analyze CV'}
-            </button>
-            {error && <p style={{ color: 'red', marginTop: '1rem' }}>{error}</p>}
+      {/* Main Content */}
+      <main style={{ padding: '2rem', maxWidth: '1400px', margin: '0 auto' }}>
+        
+        {!analysis ? (
+          <div style={{ textAlign: 'center', marginTop: '10vh' }}>
+            <h2 style={{ fontSize: '2rem', marginBottom: '1rem' }}>Upload your CV to start</h2>
+            <p style={{ marginBottom: '2rem', opacity: 0.7 }}>ATS Analysis, Gap Detection & Smart Editing</p>
+            <label style={{ display: 'inline-block', padding: '1rem 2rem', background: '#2563eb', color: 'white', borderRadius: '8px', cursor: 'pointer', fontWeight: '600', transition: 'transform 0.2s' }}>
+              Select PDF File
+              <input type="file" accept=".pdf" onChange={handleFileChange} style={{ display: 'none' }} />
+            </label>
+            {loading && <p style={{ marginTop: '1rem' }}>Analyzing document...</p>}
           </div>
         ) : (
           <>
-            {activeTab === 'analysis' && (
-              <div className="analysis-view">
-                <h2>Analysis Results</h2>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2rem' }}>
-                  <div>
-                    <h3>Strengths</h3>
-                    <ul>{result.strengths.map((s, i) => <li key={i} style={{color: 'green'}}>{s}</li>)}</ul>
+            {activeTab === 'dashboard' && (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '2rem' }}>
+                {/* Score Card */}
+                <div style={{ background: darkMode ? '#1f2937' : '#ffffff', padding: '2rem', borderRadius: '12px', boxShadow: '0 4px 6px rgba(0,0,0,0.05)', textAlign: 'center' }}>
+                  <div style={{ fontSize: '3rem', fontWeight: '800', color: analysis.issues.length === 0 ? '#10b981' : '#f59e0b' }}>
+                    {Math.max(0, 100 - (analysis.issues.length * 10))}%
                   </div>
-                  <div>
-                    <h3>Issues & Fixes</h3>
-                    {result.issues.map((issue, i) => (
-                      <div key={i} style={{ marginBottom: '1rem', padding: '1rem', background: '#fff3cd', borderRadius: '4px' }}>
-                        <strong>{issue.title}</strong>
-                        <p>{issue.description}</p>
-                        <ul>{result.solutions[issue.id]?.map((sol, j) => <li key={j}>{sol}</li>)}</ul>
-                      </div>
-                    ))}
+                  <div style={{ fontSize: '0.9rem', opacity: 0.7, textTransform: 'uppercase', letterSpacing: '1px' }}>ATS Alignment Score</div>
+                  <div style={{ marginTop: '1rem', display: 'flex', justifyContent: 'center', gap: '1rem' }}>
+                    <span style={{ color: '#10b981' }}>✓ {analysis.strengths.length} Strengths</span>
+                    <span style={{ color: '#ef4444' }}>✕ {analysis.issues.length} Issues</span>
                   </div>
+                </div>
+
+                {/* Issues List */}
+                <div style={{ gridColumn: 'span 1 / -1', background: darkMode ? '#1f2937' : '#ffffff', padding: '2rem', borderRadius: '12px', boxShadow: '0 4px 6px rgba(0,0,0,0.05)' }}>
+                  <h3 style={{ fontSize: '1.25rem', marginBottom: '1.5rem', borderBottom: '1px solid ' + (darkMode ? '#374151' : '#e5e7eb'), paddingBottom: '0.5rem' }}>Detected Issues & Fixes</h3>
+                  {analysis.issues.length === 0 ? (
+                    <p style={{ color: '#10b981' }}>No critical issues found! Your CV is well optimized.</p>
+                  ) : (
+                    <div style={{ display: 'grid', gap: '1.5rem' }}>
+                      {analysis.issues.map((issue, idx) => (
+                        <div key={idx} style={{ borderLeft: '4px solid ' + (issue.severity === 'critical' ? '#ef4444' : '#f59e0b'), paddingLeft: '1rem' }}>
+                          <h4 style={{ margin: '0 0 0.5rem 0' }}>{issue.title}</h4>
+                          <p style={{ opacity: 0.8, fontSize: '0.95rem' }}>{issue.description}</p>
+                          <div style={{ marginTop: '0.75rem', background: darkMode ? '#111827' : '#f9fafb', padding: '0.75rem', borderRadius: '6px' }}>
+                            <strong style={{ fontSize: '0.85rem', color: '#2563eb' }}>💡 Fix:</strong>
+                            <ul style={{ margin: '0.5rem 0 0 1.25rem', padding: 0, fontSize: '0.9rem' }}>
+                              {analysis.solutions[issue.id]?.map((sol, sIdx) => <li key={sIdx}>{sol}</li>)}
+                            </ul>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
             )}
 
             {activeTab === 'editor' && (
-              <div className="editor-view" style={{ display: 'flex', gap: '2rem', flexDirection: 'row' }}>
-                {/* Controls Sidebar */}
-                <div style={{ flex: '0 0 250px', padding: '1rem', background: '#f8f9fa', borderRadius: '8px', height: 'fit-content' }}>
-                  <h3>Style Controls</h3>
-                  <label style={{display:'block', marginBottom:'0.5rem'}}>Font Family</label>
-                  <select value={styles.fontFamily} onChange={(e) => updateStyle('fontFamily', e.target.value)} style={{width:'100%', padding:'5px', marginBottom:'1rem'}}>
-                    <option value="Arial, sans-serif">Arial</option>
-                    <option value="'Times New Roman', serif">Times New Roman</option>
-                    <option value="'Calibri', sans-serif">Calibri</option>
-                    <option value="'Georgia', serif">Georgia</option>
-                    <option value="'Courier New', monospace">Courier New</option>
-                  </select>
-
-                  <label style={{display:'block', marginBottom:'0.5rem'}}>Primary Color</label>
-                  <input type="color" value={styles.primaryColor} onChange={(e) => updateStyle('primaryColor', e.target.value)} style={{width:'100%', height:'40px', marginBottom:'1rem'}} />
-
-                  <label style={{display:'block', marginBottom:'0.5rem'}}>Text Size</label>
-                  <input type="range" min="10" max="18" value={parseInt(styles.fontSize)} onChange={(e) => updateStyle('fontSize', `${e.target.value}px`)} style={{width:'100%', marginBottom:'1rem'}} />
-                  
-                  <p style={{fontSize:'0.8rem', color:'#666'}}>Tip: Click any text below to edit it directly.</p>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.5fr', gap: '2rem', height: 'calc(100vh - 150px)' }}>
+                {/* Left: Original Reference */}
+                <div style={{ background: darkMode ? '#1f2937' : '#ffffff', borderRadius: '12px', overflow: 'hidden', boxShadow: '0 4px 6px rgba(0,0,0,0.05)', display: 'flex', flexDirection: 'column' }}>
+                  <div style={{ padding: '1rem', borderBottom: '1px solid ' + (darkMode ? '#374151' : '#e5e7eb'), fontWeight: '600' }}>Original PDF (Reference)</div>
+                  <iframe src={pdfUrl} style={{ flex: 1, border: 'none', width: '100%' }} title="Original PDF" />
                 </div>
 
-                {/* A4 Preview Area */}
-                <div style={{ flex: 1, overflow: 'auto', background: '#555', padding: '2rem', display: 'flex', justifyContent: 'center' }}>
-                  <div 
-                    ref={pdfRef}
-                    contentEditable
-                    suppressContentEditableWarning
-                    style={{
-                      width: '210mm',
-                      minHeight: '297mm',
-                      background: 'white',
-                      padding: '20mm',
-                      boxSizing: 'border-box',
-                      fontFamily: styles.fontFamily,
-                      fontSize: styles.fontSize,
-                      color: styles.textColor,
-                      outline: 'none',
-                      boxShadow: '0 0 10px rgba(0,0,0,0.5)'
-                    }}
-                  >
-                    {/* Editable Content Structure */}
-                    <div style={{ textAlign: 'center', borderBottom: `2px solid ${styles.primaryColor}`, paddingBottom: '10px', marginBottom: '20px' }}>
-                      <h1 style={{ margin: 0, color: styles.primaryColor, fontSize: '1.5em' }}>{cvData.header.name}</h1>
-                      <p style={{ margin: '5px 0', fontWeight: 'bold' }}>{cvData.header.title}</p>
-                      <p style={{ margin: 0, fontSize: '0.9em' }}>{cvData.header.contact}</p>
+                {/* Right: Live Editor */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <h3 style={{ margin: 0 }}>Live Editor (A4)</h3>
+                    <button onClick={downloadPDF} style={{ background: '#2563eb', color: 'white', border: 'none', padding: '8px 16px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}>Download PDF</button>
+                  </div>
+                  
+                  <div style={{ flex: 1, overflow: 'auto', background: '#525659', padding: '2rem', display: 'flex', justifyContent: 'center' }}>
+                    {/* A4 Paper Simulation */}
+                    <div id="cv-preview" style={{ 
+                      width: '210mm', 
+                      minHeight: '297mm', 
+                      background: 'white', 
+                      color: '#333', 
+                      padding: '20mm', 
+                      boxSizing: 'border-box', 
+                      boxShadow: '0 0 10px rgba(0,0,0,0.5)',
+                      fontFamily: 'Arial, sans-serif',
+                      fontSize: '11pt',
+                      lineHeight: '1.5'
+                    }}>
+                      {/* Editable Header */}
+                      <div style={{ textAlign: 'center', borderBottom: '2px solid #333', paddingBottom: '10px', marginBottom: '20px' }}>
+                        <input 
+                          defaultValue={analysis.rawText.split('\n')[0] || 'YOUR NAME'} 
+                          style={{ width: '100%', textAlign: 'center', fontSize: '24px', fontWeight: 'bold', border: 'none', outline: 'none', marginBottom: '5px' }} 
+                        />
+                        <input 
+                          defaultValue="Professional Title" 
+                          style={{ width: '100%', textAlign: 'center', fontSize: '14px', color: '#555', border: 'none', outline: 'none' }} 
+                        />
+                        <div style={{ fontSize: '12px', marginTop: '5px', color: '#666' }}>
+                          <input defaultValue="email@example.com | +1 234 567 890" style={{ width: '100%', textAlign: 'center', border: 'none', outline: 'none', background: 'transparent' }} />
+                        </div>
+                      </div>
+
+                      {/* Editable Summary */}
+                      <div style={{ marginBottom: '20px' }}>
+                        <h4 style={{ textTransform: 'uppercase', fontSize: '12px', borderBottom: '1px solid #ccc', marginBottom: '10px' }}>Professional Summary</h4>
+                        <textarea 
+                          defaultValue={cvData.summary} 
+                          style={{ width: '100%', border: 'none', outline: 'none', resize: 'none', fontFamily: 'inherit', fontSize: 'inherit', minHeight: '80px' }} 
+                        />
+                      </div>
+
+                      {/* Editable Experience (Static Demo Structure) */}
+                      <div style={{ marginBottom: '20px' }}>
+                        <h4 style={{ textTransform: 'uppercase', fontSize: '12px', borderBottom: '1px solid #ccc', marginBottom: '10px' }}>Experience</h4>
+                        <div style={{ marginBottom: '15px' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 'bold' }}>
+                            <input defaultValue="Job Title" style={{ border: 'none', outline: 'none', fontWeight: 'bold', width: '50%' }} />
+                            <input defaultValue="Date Range" style={{ border: 'none', outline: 'none', textAlign: 'right' }} />
+                          </div>
+                          <input defaultValue="Company Name" style={{ border: 'none', outline: 'none', fontStyle: 'italic', width: '100%', marginBottom: '5px' }} />
+                          <textarea defaultValue="- Achieved X% growth..." style={{ width: '100%', border: 'none', outline: 'none', resize: 'none', fontFamily: 'inherit', fontSize: 'inherit' }} rows={3} />
+                        </div>
+                      </div>
+                      
+                      <div style={{ textAlign: 'center', color: '#999', fontSize: '10px', marginTop: '20px' }}>
+                        * Click on any text above to edit. Layout is fixed to A4.
+                      </div>
                     </div>
-
-                    {cvData.summary && (
-                      <div style={{ marginBottom: '20px' }}>
-                        <h3 style={{ color: styles.primaryColor, textTransform: 'uppercase', borderBottom: '1px solid #ddd' }}>Professional Summary</h3>
-                        <p>{cvData.summary}</p>
-                      </div>
-                    )}
-
-                    {cvData.experience.length > 0 && (
-                      <div style={{ marginBottom: '20px' }}>
-                        <h3 style={{ color: styles.primaryColor, textTransform: 'uppercase', borderBottom: '1px solid #ddd' }}>Experience</h3>
-                        {cvData.experience.map((exp, i) => (
-                          <div key={i} style={{ marginBottom: '15px' }}>
-                            <p style={{ whiteSpace: 'pre-wrap' }}>{exp}</p>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-
-                    {cvData.education.length > 0 && (
-                      <div style={{ marginBottom: '20px' }}>
-                        <h3 style={{ color: styles.primaryColor, textTransform: 'uppercase', borderBottom: '1px solid #ddd' }}>Education</h3>
-                        {cvData.education.map((edu, i) => (
-                          <div key={i} style={{ marginBottom: '10px' }}>
-                            <p style={{ whiteSpace: 'pre-wrap' }}>{edu}</p>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                    
-                    {cvData.skills.length > 0 && (
-                      <div>
-                        <h3 style={{ color: styles.primaryColor, textTransform: 'uppercase', borderBottom: '1px solid #ddd' }}>Skills</h3>
-                        <p>{cvData.skills.join(', ')}</p>
-                      </div>
-                    )}
                   </div>
                 </div>
               </div>
@@ -291,16 +252,6 @@ function App() {
           </>
         )}
       </main>
-
-      <style>{`
-        body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; transition: background 0.3s, color 0.3s; }
-        .app-container.light { background: #f4f6f8; color: #333; }
-        .app-container.dark { background: #1a1a1a; color: #f0f0f0; }
-        .app-container.dark header { border-color: #444; background: #2d2d2d; }
-        .app-container.dark .analysis-view h3 { color: #fff; }
-        .app-container.dark button { color: #fff; }
-        .app-container.dark button:not([style*="background: #"]) { background: #444 !important; }
-      `}</style>
     </div>
   );
 }
