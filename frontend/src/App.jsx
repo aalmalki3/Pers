@@ -1,12 +1,21 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 
 function App() {
   const [file, setFile] = useState(null);
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  // Default to 'strengths' tab for a positive first impression
-  const [activeTab, setActiveTab] = useState('strengths'); 
+  const [activeTab, setActiveTab] = useState('overview'); 
+  const [darkMode, setDarkMode] = useState(false);
+
+  // Handle Theme Toggle
+  useEffect(() => {
+    if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+      setDarkMode(true);
+    }
+  }, []);
+
+  const toggleTheme = () => setDarkMode(!darkMode);
 
   const handleFileChange = (e) => {
     if (e.target.files[0]) {
@@ -26,14 +35,11 @@ function App() {
     formData.append('cv', file);
 
     try {
-      const response = await fetch('/api/upload-cv', {
-        method: 'POST',
-        body: formData,
-      });
-
+      const response = await fetch('/api/upload-cv', { method: 'POST', body: formData });
       const data = await response.json();
       if (!response.ok) throw new Error(data.details || 'Failed to upload');
       setResult(data);
+      setActiveTab('overview');
     } catch (err) {
       setError(err.message);
     } finally {
@@ -41,234 +47,344 @@ function App() {
     }
   };
 
-  const getSeverityColor = (severity) => {
-    if (severity === 'critical') return '#dc3545';
-    if (severity === 'high') return '#fd7e14';
-    return '#ffc107';
+  // Calculate Alignment Score
+  const calculateScore = (issues, strengths) => {
+    const totalChecks = issues.length + strengths.length;
+    if (totalChecks === 0) return 0;
+    return Math.round((strengths.length / totalChecks) * 100);
   };
 
-  // Calculate a simple alignment score
-  const totalChecks = (result?.issues.length || 0) + (result?.strengths.length || 0);
-  const alignmentScore = totalChecks > 0 
-    ? Math.round(((result?.strengths.length || 0) / totalChecks) * 100) 
-    : 0;
+  const score = result ? calculateScore(result.issues, result.strengths) : 0;
+  
+  // Dynamic Styles based on Theme
+  const theme = {
+    bg: darkMode ? '#0f172a' : '#f8fafc',
+    cardBg: darkMode ? '#1e293b' : '#ffffff',
+    text: darkMode ? '#f1f5f9' : '#1e293b',
+    textMuted: darkMode ? '#94a3b8' : '#64748b',
+    border: darkMode ? '#334155' : '#e2e8f0',
+    primary: '#3b82f6',
+    success: '#10b981',
+    warning: '#f59e0b',
+    danger: '#ef4444'
+  };
 
   return (
-    <div style={{ padding: '2rem', fontFamily: 'system-ui, sans-serif', maxWidth: '900px', margin: '0 auto', color: '#333' }}>
-      <header style={{ marginBottom: '2rem', textAlign: 'center' }}>
-        <h1 style={{ color: '#2c3e50' }}>CV Career Advisor</h1>
-        <p style={{ color: '#666' }}>ATS Compatibility & Career Gap Analysis</p>
+    <div style={{ 
+      minHeight: '100vh', 
+      background: theme.bg, 
+      color: theme.text, 
+      fontFamily: 'system-ui, -apple-system, sans-serif',
+      transition: 'all 0.3s ease'
+    }}>
+      {/* Header */}
+      <header style={{ 
+        padding: '1.5rem 2rem', 
+        borderBottom: `1px solid ${theme.border}`,
+        background: theme.cardBg,
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        position: 'sticky',
+        top: 0,
+        zIndex: 100
+      }}>
+        <div>
+          <h1 style={{ margin: 0, fontSize: '1.5rem', fontWeight: '800' }}>CV ATS Analyzer</h1>
+          <p style={{ margin: '4px 0 0', fontSize: '0.875rem', color: theme.textMuted }}>Professional Gap & Weakness Detector</p>
+        </div>
+        
+        <button 
+          onClick={toggleTheme}
+          style={{
+            background: 'transparent',
+            border: `1px solid ${theme.border}`,
+            color: theme.text,
+            padding: '8px 12px',
+            borderRadius: '8px',
+            cursor: 'pointer',
+            fontSize: '1.2rem',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            width: '44px',
+            height: '44px'
+          }}
+          aria-label="Toggle Dark Mode"
+        >
+          {darkMode ? '☀️' : '🌙'}
+        </button>
       </header>
 
-      {/* Upload Section */}
-      <div style={{ border: '2px dashed #cbd5e0', padding: '2rem', textAlign: 'center', borderRadius: '8px', background: '#f8fafc' }}>
-        <input type="file" accept=".pdf" onChange={handleFileChange} style={{ marginBottom: '1rem' }} />
-        <br />
-        <button 
-          onClick={handleUpload} 
-          disabled={!file || loading}
-          style={{ 
-            padding: '12px 24px', 
-            background: loading ? '#9ca3af' : '#2563eb', 
-            color: 'white', 
-            border: 'none', 
-            borderRadius: '6px', 
-            cursor: loading ? 'not-allowed' : 'pointer',
-            fontSize: '1rem',
-            fontWeight: 'bold'
-          }}
-        >
-          {loading ? 'Analyzing CV...' : 'Analyze CV'}
-        </button>
-      </div>
-
-      {error && (
-        <div style={{ marginTop: '1rem', color: '#721c24', background: '#f8d7da', padding: '1rem', borderRadius: '6px' }}>
-          <strong>Error:</strong> {error}
-        </div>
-      )}
-
-      {/* Results Dashboard */}
-      {result && (
-        <div style={{ marginTop: '2rem' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap', gap: '1rem' }}>
-            <h2 style={{ margin: 0 }}>Analysis: {result.fileName}</h2>
+      <main style={{ maxWidth: '900px', margin: '0 auto', padding: '2rem' }}>
+        
+        {/* Upload Section */}
+        {!result && (
+          <div style={{ 
+            textAlign: 'center', 
+            padding: '4rem 2rem', 
+            border: `2px dashed ${theme.border}`, 
+            borderRadius: '12px', 
+            background: theme.cardBg 
+          }}>
+            <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>📄</div>
+            <h2 style={{ marginBottom: '0.5rem' }}>Upload your CV</h2>
+            <p style={{ color: theme.textMuted, marginBottom: '2rem' }}>Supports PDF. Instant ATS analysis.</p>
             
-            {/* Alignment Score Badge */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-              <span style={{ fontSize: '0.9rem', color: '#666' }}>ATS Alignment:</span>
-              <div style={{ 
-                background: alignmentScore > 70 ? '#d1fae5' : alignmentScore > 40 ? '#fef3c7' : '#fee2e2',
-                color: alignmentScore > 70 ? '#065f46' : alignmentScore > 40 ? '#92400e' : '#991b1b',
-                padding: '6px 16px', 
-                borderRadius: '20px', 
-                fontWeight: 'bold',
-                fontSize: '1.1rem'
-              }}>
-                {alignmentScore}% Match
+            <input 
+              type="file" 
+              accept=".pdf" 
+              onChange={handleFileChange} 
+              style={{ marginBottom: '1.5rem' }}
+            />
+            <br />
+            <button 
+              onClick={handleUpload} 
+              disabled={!file || loading}
+              style={{ 
+                padding: '12px 32px', 
+                background: loading ? theme.textMuted : theme.primary, 
+                color: 'white', 
+                border: 'none', 
+                borderRadius: '8px', 
+                cursor: loading ? 'not-allowed' : 'pointer',
+                fontSize: '1rem',
+                fontWeight: '600',
+                transition: 'opacity 0.2s'
+              }}
+            >
+              {loading ? 'Analyzing...' : 'Analyze CV'}
+            </button>
+            {error && <p style={{ color: theme.danger, marginTop: '1rem' }}>{error}</p>}
+          </div>
+        )}
+
+        {/* Results Dashboard */}
+        {result && (
+          <div style={{ animation: 'fadeIn 0.5s ease' }}>
+            
+            {/* Score Card */}
+            <div style={{ 
+              background: theme.cardBg, 
+              padding: '2rem', 
+              borderRadius: '12px', 
+              marginBottom: '2rem',
+              border: `1px solid ${theme.border}`,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              flexWrap: 'wrap',
+              gap: '1rem'
+            }}>
+              <div>
+                <h2 style={{ margin: '0 0 0.5rem 0' }}>Analysis Complete</h2>
+                <p style={{ color: theme.textMuted, margin: 0 }}>File: {result.fileName}</p>
+              </div>
+              
+              <div style={{ textAlign: 'right' }}>
+                <div style={{ fontSize: '2.5rem', fontWeight: '800', color: score >= 80 ? theme.success : score >= 50 ? theme.warning : theme.danger }}>
+                  {score}%
+                </div>
+                <div style={{ fontSize: '0.875rem', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '1px' }}>
+                  ATS Alignment Score
+                </div>
               </div>
             </div>
-          </div>
 
-          {/* Tabs - Strengths First */}
-          <div style={{ display: 'flex', borderBottom: '1px solid #ddd', marginBottom: '1.5rem', flexWrap: 'wrap' }}>
-            <button 
-              onClick={() => setActiveTab('strengths')}
-              style={{ 
-                padding: '12px 24px', 
-                background: activeTab === 'strengths' ? '#10b981' : 'transparent', 
-                color: activeTab === 'strengths' ? 'white' : '#333', 
-                border: 'none', 
-                cursor: 'pointer', 
-                borderRadius: '6px 6px 0 0',
-                fontWeight: activeTab === 'strengths' ? 'bold' : 'normal',
-                marginRight: '4px'
-              }}
-            >
-              ✓ Strengths & Alignment ({result.strengths.length})
-            </button>
-            <button 
-              onClick={() => setActiveTab('issues')}
-              style={{ 
-                padding: '12px 24px', 
-                background: activeTab === 'issues' ? '#ef4444' : 'transparent', 
-                color: activeTab === 'issues' ? 'white' : '#333', 
-                border: 'none', 
-                cursor: 'pointer', 
-                borderRadius: '6px 6px 0 0',
-                fontWeight: activeTab === 'issues' ? 'bold' : 'normal',
-                marginRight: '4px'
-              }}
-            >
-              ! Issues & Gaps ({result.issues.length})
-            </button>
-            <button 
-              onClick={() => setActiveTab('raw')}
-              style={{ 
-                padding: '12px 24px', 
-                background: activeTab === 'raw' ? '#64748b' : 'transparent', 
-                color: activeTab === 'raw' ? 'white' : '#333', 
-                border: 'none', 
-                cursor: 'pointer', 
-                borderRadius: '6px 6px 0 0',
-                fontWeight: activeTab === 'raw' ? 'bold' : 'normal',
-              }}
-            >
-              Raw Text
-            </button>
-          </div>
+            {/* Tabs */}
+            <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.5rem', overflowX: 'auto' }}>
+              {[
+                { id: 'overview', label: 'Overview', icon: '📊' },
+                { id: 'issues', label: `Issues (${result.issues.length})`, icon: '⚠️' },
+                { id: 'strengths', label: `Strengths (${result.strengths.length})`, icon: '✅' },
+                { id: 'raw', label: 'Raw Text', icon: '📝' }
+              ].map(tab => (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  style={{
+                    padding: '10px 20px',
+                    background: activeTab === tab.id ? theme.primary : theme.cardBg,
+                    color: activeTab === tab.id ? 'white' : theme.text,
+                    border: `1px solid ${theme.border}`,
+                    borderRadius: '8px',
+                    cursor: 'pointer',
+                    fontWeight: '500',
+                    whiteSpace: 'nowrap',
+                    transition: 'all 0.2s'
+                  }}
+                >
+                  {tab.icon} {tab.label}
+                </button>
+              ))}
+            </div>
 
-          {/* Content Area */}
-          <div style={{ background: '#fff', padding: '1.5rem', border: '1px solid #e2e8f0', borderRadius: '8px', minHeight: '300px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.1)' }}>
-            
-            {/* STRENGTHS TAB */}
-            {activeTab === 'strengths' && (
-              <div>
-                <h3 style={{ color: '#065f46', marginTop: 0 }}>What You're Doing Right</h3>
-                <p style={{ color: '#666', marginBottom: '1.5rem' }}>Your CV aligns well with ATS standards in the following areas:</p>
-                {result.strengths.length === 0 ? (
-                  <p>No specific strengths detected yet. Let's fix the issues below!</p>
-                ) : (
-                  <ul style={{ listStyle: 'none', padding: 0 }}>
-                    {result.strengths.map((str, idx) => (
-                      <li key={idx} style={{ 
-                        padding: '1rem', 
-                        background: '#ecfdf5', 
-                        borderLeft: '5px solid #10b981', 
-                        marginBottom: '1rem', 
-                        color: '#065f46',
-                        borderRadius: '0 4px 4px 0'
-                      }}>
-                        <strong style={{ display: 'block', fontSize: '1.05rem' }}>✓ {str}</strong>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-                
-                {result.issues.length > 0 && (
-                  <div style={{ marginTop: '2rem', textAlign: 'center' }}>
-                    <button 
-                      onClick={() => setActiveTab('issues')}
-                      style={{ padding: '10px 20px', background: '#fff', border: '2px solid #ef4444', color: '#ef4444', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}
-                    >
-                      View Areas for Improvement →
-                    </button>
+            {/* Content Area */}
+            <div style={{ 
+              background: theme.cardBg, 
+              padding: '2rem', 
+              borderRadius: '12px', 
+              border: `1px solid ${theme.border}`,
+              minHeight: '400px'
+            }}>
+              
+              {/* OVERVIEW TAB */}
+              {activeTab === 'overview' && (
+                <div>
+                  <h3 style={{ borderBottom: `1px solid ${theme.border}`, paddingBottom: '1rem', marginBottom: '1.5rem' }}>Executive Summary</h3>
+                  
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '1.5rem' }}>
+                    <div style={{ padding: '1.5rem', background: darkMode ? '#064e3b' : '#ecfdf5', borderRadius: '8px', borderLeft: `4px solid ${theme.success}` }}>
+                      <h4 style={{ margin: '0 0 0.5rem 0', color: theme.success }}>Strengths</h4>
+                      <p style={{ margin: 0, fontSize: '0.9rem' }}>{result.strengths.length} areas align with ATS standards.</p>
+                    </div>
+                    <div style={{ padding: '1.5rem', background: darkMode ? '#450a0a' : '#fef2f2', borderRadius: '8px', borderLeft: `4px solid ${theme.danger}` }}>
+                      <h4 style={{ margin: '0 0 0.5rem 0', color: theme.danger }}>Critical Issues</h4>
+                      <p style={{ margin: 0, fontSize: '0.9rem' }}>{result.issues.filter(i => i.severity === 'critical' || i.severity === 'high').length} high-priority fixes needed.</p>
+                    </div>
                   </div>
-                )}
-              </div>
-            )}
 
-            {/* ISSUES TAB */}
-            {activeTab === 'issues' && (
-              <div>
-                <h3 style={{ color: '#991b1b', marginTop: 0 }}>Areas for Improvement</h3>
-                <p style={{ color: '#666', marginBottom: '1.5rem' }}>Fix these issues to increase your ATS alignment score and interview chances.</p>
-                
-                {result.issues.length === 0 ? (
-                  <div style={{ textAlign: 'center', padding: '2rem', color: '#065f46' }}>
-                    <h3>🎉 Perfect Score!</h3>
-                    <p>No critical issues found. Your CV is ready.</p>
-                  </div>
-                ) : (
-                  result.issues.map((issue, idx) => (
-                    <div key={idx} style={{ marginBottom: '2rem', paddingBottom: '2rem', borderBottom: '1px solid #eee' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', marginBottom: '0.5rem', flexWrap: 'wrap', gap: '10px' }}>
-                        <span style={{ 
-                          width: '14px', height: '14px', borderRadius: '50%', 
-                          background: getSeverityColor(issue.severity), 
-                          display: 'inline-block' 
-                        }}></span>
-                        <h3 style={{ margin: 0, fontSize: '1.2rem', color: '#333' }}>{issue.title}</h3>
-                        <span style={{ 
-                          fontSize: '0.75rem', 
-                          background: '#e2e8f0', 
-                          padding: '4px 10px', 
-                          borderRadius: '12px', 
-                          textTransform: 'uppercase',
-                          letterSpacing: '0.5px',
-                          color: '#64748b'
-                        }}>{issue.category}</span>
-                      </div>
-                      <p style={{ color: '#555', margin: '0.5rem 0 1rem 24px', lineHeight: '1.5' }}>{issue.description}</p>
-                      
-                      {/* Solutions Box */}
-                      <div style={{ background: '#f0f9ff', padding: '1.2rem', borderRadius: '8px', marginLeft: '24px', border: '1px solid #bae6fd' }}>
-                        <strong style={{ display: 'block', marginBottom: '0.8rem', color: '#0369a1', fontSize: '0.9rem', textTransform: 'uppercase' }}>💡 How to Fix:</strong>
-                        <ul style={{ margin: 0, paddingLeft: '1.2rem', lineHeight: '1.6' }}>
-                          {result.solutions[issue.id]?.map((sol, sIdx) => (
-                            <li key={sIdx} style={{ marginBottom: '0.5rem', color: '#333' }}>{sol}</li>
+                  <div style={{ marginTop: '2rem' }}>
+                    <h4 style={{ marginBottom: '1rem' }}>Top Recommendation</h4>
+                    {result.issues.length > 0 ? (
+                      <div style={{ padding: '1.5rem', background: theme.bg, borderRadius: '8px', border: `1px solid ${theme.border}` }}>
+                        <strong style={{ color: theme.danger }}>{result.issues[0].title}</strong>
+                        <p style={{ margin: '0.5rem 0', color: theme.textMuted }}>{result.issues[0].description}</p>
+                        <ul style={{ margin: 0, paddingLeft: '1.2rem' }}>
+                          {result.solutions[result.issues[0].id]?.slice(0, 2).map((sol, i) => (
+                            <li key={i} style={{ marginBottom: '0.5rem', fontSize: '0.9rem' }}>{sol}</li>
                           ))}
                         </ul>
                       </div>
-                    </div>
-                  ))
-                )}
-              </div>
-            )}
+                    ) : (
+                      <p style={{ color: theme.success }}>No critical issues found! Your CV is well optimized.</p>
+                    )}
+                  </div>
+                </div>
+              )}
 
-            {/* RAW TEXT TAB */}
-            {activeTab === 'raw' && (
-              <div>
-                <h3 style={{ marginTop: 0 }}>Extracted Text</h3>
-                <p style={{ fontSize: '0.85rem', color: '#666', marginBottom: '1rem' }}>This is what the ATS sees. If text is missing here, the ATS won't see it either.</p>
+              {/* ISSUES TAB */}
+              {activeTab === 'issues' && (
+                <div>
+                  {result.issues.length === 0 ? (
+                    <div style={{ textAlign: 'center', padding: '3rem', color: theme.success }}>
+                      <div style={{ fontSize: '3rem' }}>🎉</div>
+                      <h3>No Issues Found!</h3>
+                      <p>Your CV passes all checked ATS criteria.</p>
+                    </div>
+                  ) : (
+                    result.issues.map((issue, idx) => (
+                      <div key={idx} style={{ 
+                        marginBottom: '1.5rem', 
+                        paddingBottom: '1.5rem', 
+                        borderBottom: `1px solid ${theme.border}`,
+                        lastChild: { borderBottom: 'none' }
+                      }}>
+                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: '1rem' }}>
+                          <span style={{ 
+                            fontSize: '1.5rem',
+                            color: issue.severity === 'critical' ? theme.danger : issue.severity === 'high' ? theme.warning : theme.textMuted
+                          }}>
+                            {issue.severity === 'critical' ? '🛑' : issue.severity === 'high' ? '⚠️' : 'ℹ️'}
+                          </span>
+                          <div style={{ flex: 1 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                              <h3 style={{ margin: 0, fontSize: '1.1rem' }}>{issue.title}</h3>
+                              <span style={{ 
+                                fontSize: '0.75rem', 
+                                background: theme.border, 
+                                padding: '2px 8px', 
+                                borderRadius: '4px',
+                                textTransform: 'uppercase',
+                                fontWeight: '600'
+                              }}>{issue.category}</span>
+                            </div>
+                            <p style={{ color: theme.textMuted, margin: '0.5rem 0 1rem 0' }}>{issue.description}</p>
+                            
+                            <div style={{ 
+                              background: darkMode ? '#1e3a8a' : '#eff6ff', 
+                              padding: '1rem', 
+                              borderRadius: '8px',
+                              border: `1px solid ${darkMode ? '#1e40af' : '#dbeafe'}`
+                            }}>
+                              <strong style={{ display: 'block', marginBottom: '0.75rem', color: theme.primary }}>💡 How to fix:</strong>
+                              <ul style={{ margin: 0, paddingLeft: '1.2rem', lineHeight: '1.6' }}>
+                                {result.solutions[issue.id]?.map((sol, sIdx) => (
+                                  <li key={sIdx} style={{ marginBottom: '0.5rem' }}>{sol}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
+
+              {/* STRENGTHS TAB */}
+              {activeTab === 'strengths' && (
+                <div style={{ display: 'grid', gap: '1rem' }}>
+                  {result.strengths.map((str, idx) => (
+                    <div key={idx} style={{ 
+                      display: 'flex', 
+                      alignItems: 'center', 
+                      padding: '1rem', 
+                      background: darkMode ? '#064e3b' : '#ecfdf5', 
+                      borderLeft: `4px solid ${theme.success}`, 
+                      borderRadius: '8px' 
+                    }}>
+                      <span style={{ fontSize: '1.2rem', marginRight: '1rem' }}>✅</span>
+                      <span style={{ fontWeight: '500' }}>{str}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* RAW TEXT TAB */}
+              {activeTab === 'raw' && (
                 <pre style={{ 
                   whiteSpace: 'pre-wrap', 
                   fontSize: '0.85rem', 
-                  color: '#333', 
-                  background: '#f8fafc', 
+                  color: theme.textMuted, 
+                  background: theme.bg, 
                   padding: '1rem', 
-                  borderRadius: '4px',
-                  border: '1px solid #e2e8f0',
+                  borderRadius: '8px',
+                  border: `1px solid ${theme.border}`,
                   maxHeight: '500px',
                   overflowY: 'auto'
                 }}>
                   {result.rawText}
                 </pre>
-              </div>
-            )}
+              )}
+            </div>
+            
+            {/* Reset Button */}
+            <div style={{ textAlign: 'center', marginTop: '2rem' }}>
+              <button 
+                onClick={() => { setResult(null); setFile(null); }}
+                style={{
+                  background: 'transparent',
+                  color: theme.textMuted,
+                  border: `1px solid ${theme.border}`,
+                  padding: '8px 16px',
+                  borderRadius: '6px',
+                  cursor: 'pointer'
+                }}
+              >
+                Analyze Another CV
+              </button>
+            </div>
           </div>
-        </div>
-      )}
+        )}
+      </main>
+      
+      <style>{`
+        @keyframes fadeIn {
+          from { opacity: 0; transform: translateY(10px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+      `}</style>
     </div>
   );
 }
