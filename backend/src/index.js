@@ -31,10 +31,9 @@ const analyzeCV = (text) => {
   
   const issues = [];
   const strengths = [];
-  const solutions = {}; // Map issue ID to solutions
+  const solutions = {}; 
 
   // 1. ATS COMPATIBILITY CHECKS
-  // Check for standard headings
   const standardHeadings = ['experience', 'education', 'skills', 'summary', 'work history', 'employment'];
   const foundHeadings = standardHeadings.filter(h => fullTextLower.includes(h));
   
@@ -44,7 +43,7 @@ const analyzeCV = (text) => {
       severity: 'high',
       category: 'ATS Compatibility',
       title: 'Missing Standard Section Headings',
-      description: 'ATS systems rely on standard headings like "Experience" or "Education" to parse your CV. Uncommon headings may cause data loss.'
+      description: 'ATS systems rely on standard headings like "Experience" or "Education" to parse your CV.'
     });
     solutions['ats_headings'] = [
       'Rename your sections to: "Professional Experience", "Education", "Skills", "Summary".',
@@ -55,8 +54,6 @@ const analyzeCV = (text) => {
     strengths.push('Uses standard ATS-friendly section headings.');
   }
 
-  // Check for tables/graphics indicators (often extracted as weird characters or empty spaces in pdf-parse)
-  // Note: Pure text extraction can't perfectly detect visual tables, but we can check for layout chaos
   const hasEmail = /[\w.-]+@[\w.-]+\.\w+/.test(text);
   const hasPhone = /(\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}/.test(text);
   
@@ -77,31 +74,9 @@ const analyzeCV = (text) => {
     strengths.push('Contact information is clearly detected.');
   }
 
-  // 2. EXPERIENCE & GAP ANALYSIS
-  // Simple regex to find date ranges like "01/2020 - 03/2021" or "Jan 2020 – Present"
-  const dateRangeRegex = /(\d{1,2}[\/\-]\d{2,4}|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{4})\s*[-–to]+\s*(\d{1,2}[\/\-]\d{2,4}|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{4}|Present|Current)/gi;
-  const datesFound = text.match(dateRangeRegex);
-
-  let gapDetected = false;
-  // Heuristic: If we have dates, we assume a timeline exists. 
-  // Real gap calculation requires sorting dates, which is complex for a single file demo.
-  // Instead, we look for keywords indicating gaps or short tenures.
+  // 2. CONTENT QUALITY & WEAKNESSES
   
-  const shortTenureKeywords = ['months', 'month']; 
-  // Check for roles lasting less than a year explicitly mentioned or implied by date proximity
-  // For this demo, we flag if the text contains many short duration mentions without explanation
-  
-  // Check for "Present" to ensure current role is clear
-  if (!fullTextLower.includes('present') && !fullTextLower.includes('current')) {
-     // Only flag if there are dates, implying an old CV
-     if (datesFound && datesFound.length > 0) {
-        // Optional warning, skipping for now to reduce noise
-     }
-  }
-
-  // 3. CONTENT QUALITY & WEAKNESSES
-  
-  // Check for Metrics/Numbers in bullet points
+  // Check for Metrics/Numbers
   const hasMetrics = /(\d+%|\$\d+|\d+\s+(people|team|users|clients|revenue)|increased|reduced|saved)\b/i.test(text);
   if (!hasMetrics) {
     issues.push({
@@ -155,16 +130,12 @@ const analyzeCV = (text) => {
       'Add a "Professional Summary" section at the top.',
       'Write 3 lines: [Role] with [X] years experience in [Industry]. Expert in [Skill 1] and [Skill 2].',
       'Focus on your biggest achievement in the first sentence.'
-    ]);
+    ];
   } else {
     strengths.push('Includes a professional summary.');
   }
 
-  // Specific Gap Logic (Simplified for Text)
-  // If we see two dates that are far apart visually in the text without a job in between? 
-  // Hard to do perfectly without structured data. 
-  // Instead, we check for "Sabbatical", "Career Break" keywords. If missing and long gaps exist (hard to calc here), we advise.
-  // Let's add a generic "Employment Gap" advisory if the CV spans many years but has few roles listed.
+  // Gap Logic: Year Span vs Role Count
   const roleCount = (text.match(/(manager|director|head|vp|ceo|officer|specialist|analyst)/gi) || []).length;
   const yearMatches = text.match(/\b(19|20)\d{2}\b/g) || [];
   const yearSpan = yearMatches.length > 0 ? (Math.max(...yearMatches.map(Number)) - Math.min(...yearMatches.map(Number))) : 0;
@@ -175,13 +146,13 @@ const analyzeCV = (text) => {
       severity: 'high',
       category: 'Employment History',
       title: 'Potential Employment Gaps Detected',
-      description: 'Your career span is ' + yearSpan + ' years, but only ' + roleCount + ' roles are clearly detailed. Unexplained gaps >6 months raise red flags.'
+      description: `Your career span is ${yearSpan} years, but only ${roleCount} roles are clearly detailed. Unexplained gaps >6 months raise red flags.`
     });
     solutions['potential_gaps'] = [
       'Explicitly list "Career Break" or "Sabbatical" with dates if you were out of the workforce.',
       'Group short-term contracts under a "Consulting" header to bridge gaps.',
       'Add "Freelance" or "Professional Development" entries for gap periods.'
-    ]);
+    ];
   }
 
   return { issues, strengths, solutions };
@@ -195,13 +166,12 @@ app.post('/api/upload-cv', upload.single('cv'), async (req, res) => {
     const data = await pdfParse(req.file.buffer);
     const text = data.text;
     
-    // Run Analysis
     const analysis = analyzeCV(text);
 
     res.json({ 
       success: true,
       fileName: req.file.originalname,
-      rawText: text, // Keep for debugging if needed
+      rawText: text,
       ...analysis 
     });
 
