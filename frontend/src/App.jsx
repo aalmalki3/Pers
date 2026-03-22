@@ -1,99 +1,139 @@
 import { useState, useRef, useEffect } from 'react';
-import { pdfjs } from 'pdfjs-dist';
 import html2pdf from 'html2pdf.js';
 
-// Set worker source for PDF.js
-pdfjs.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjs.version}/pdf.worker.min.js`;
+// --- Icons ---
+const SunIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>;
+const MoonIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>;
+const DownloadIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>;
+const EditIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>;
 
 function App() {
   const [file, setFile] = useState(null);
-  const [pdfFile, setPdfFile] = useState(null);
-  const [pages, setPages] = useState([]);
+  const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [activeTab, setActiveTab] = useState('analysis'); // analysis, editor
+  const [darkMode, setDarkMode] = useState(false);
   
   // Editor State
-  const [textBlocks, setTextBlocks] = useState([]);
-  const [selectedBlock, setSelectedBlock] = useState(null);
-  const containerRef = useRef(null);
+  const [cvData, setCvData] = useState({
+    header: { name: '', title: '', contact: '' },
+    summary: '',
+    experience: [],
+    education: [],
+    skills: []
+  });
+  const [styles, setStyles] = useState({
+    fontFamily: 'Arial, sans-serif',
+    primaryColor: '#2c3e50',
+    textColor: '#333333',
+    fontSize: '14px'
+  });
 
-  const handleFileChange = async (e) => {
-    const selectedFile = e.target.files[0];
-    if (!selectedFile) return;
+  const pdfRef = useRef();
 
-    setFile(selectedFile);
+  // Toggle Theme
+  useEffect(() => {
+    if (darkMode) document.body.classList.add('dark-mode');
+    else document.body.classList.remove('dark-mode');
+  }, [darkMode]);
+
+  const handleFileChange = (e) => {
+    if (e.target.files[0]) {
+      setFile(e.target.files[0]);
+      setError('');
+      setResult(null);
+      setActiveTab('analysis');
+    }
+  };
+
+  const handleUpload = async () => {
+    if (!file) return;
     setLoading(true);
     setError('');
-    setTextBlocks([]);
-    
+    setResult(null);
+
+    const formData = new FormData();
+    formData.append('cv', file);
+
     try {
-      const arrayBuffer = await selectedFile.arrayBuffer();
-      const pdf = await pdfjs.getDocument(arrayBuffer).promise;
-      setPdfFile(pdf);
+      const response = await fetch('/api/upload-cv', { method: 'POST', body: formData });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.details || 'Failed to upload');
       
-      const pagePromises = [];
-      for (let i = 1; i <= pdf.numPages; i++) {
-        pagePromises.push(pdf.getPage(i));
-      }
-      const loadedPages = await Promise.all(pagePromises);
-      setPages(loadedPages);
-      
-      // Auto-switch to editor if file loaded
-      if (loadedPages.length > 0) {
-        setActiveTab('editor');
-      }
+      setResult(data);
+      parseCVText(data.rawText); // Auto-populate editor
+      setActiveTab('analysis');
     } catch (err) {
-      setError('Failed to load PDF. Ensure it is a valid file.');
-      console.error(err);
+      setError(err.message);
     } finally {
       setLoading(false);
     }
   };
 
-  const handlePageRender = async (page, index) => {
-    const canvas = document.getElementById(`page-canvas-${index}`);
-    if (!canvas) return;
-
-    const viewport = page.getViewport({ scale: 1.5 }); // High res for editing
-    const context = canvas.getContext('2d');
-    canvas.height = viewport.height;
-    canvas.width = viewport.width;
-
-    await page.render({
-      canvasContext: context,
-      viewport: viewport
-    }).promise;
+  // Simple Heuristic Parser to Reconstruct Structure
+  const parseCVText = (text) => {
+    const lines = text.split('\n').map(l => l.trim()).filter(l => l);
     
-    return viewport;
-  };
+    // Detect Header (First few non-empty lines usually)
+    const name = lines[0] || '';
+    const title = lines[1] || '';
+    const contact = lines[2] || '';
 
-  const addTextBlock = (e, pageIndex) => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
+    // Detect Sections
+    let currentSection = 'summary';
+    const experience = [];
+    const education = [];
+    const skills = [];
+    let summary = '';
+    let buffer = [];
 
-    const newBlock = {
-      id: Date.now(),
-      page: pageIndex,
-      x,
-      y,
-      text: 'New Text',
-      fontSize: 12,
-      fontFamily: 'Arial',
-      color: '#000000',
-      fontWeight: 'normal'
+    const sectionKeywords = {
+      'experience': ['experience', 'work history', 'employment'],
+      'education': ['education', 'academic'],
+      'skills': ['skills', 'competencies', 'languages'],
+      'summary': ['summary', 'profile', 'about']
     };
-    setTextBlocks([...textBlocks, newBlock]);
-    setSelectedBlock(newBlock.id);
-  };
 
-  const updateBlock = (id, field, value) => {
-    setTextBlocks(blocks => blocks.map(b => b.id === id ? { ...b, [field]: value } : b));
+    lines.forEach(line => {
+      const lower = line.toLowerCase();
+      let foundSection = null;
+
+      // Check if line is a section header
+      Object.keys(sectionKeywords).forEach(key => {
+        if (sectionKeywords[key].some(k => lower.includes(k) && lower.length < 30)) {
+          foundSection = key;
+        }
+      });
+
+      if (foundSection) {
+        // Save previous buffer to previous section
+        if (currentSection === 'experience' && buffer.length > 0) experience.push(buffer.join('\n'));
+        if (currentSection === 'education' && buffer.length > 0) education.push(buffer.join('\n'));
+        if (currentSection === 'skills' && buffer.length > 0) skills.push(buffer.join('\n'));
+        if (currentSection === 'summary' && buffer.length > 0) summary = buffer.join(' ');
+        
+        currentSection = foundSection;
+        buffer = [];
+      } else {
+        buffer.push(line);
+      }
+    });
+    // Push final buffer
+    if (currentSection === 'experience' && buffer.length > 0) experience.push(buffer.join('\n'));
+    if (currentSection === 'summary' && buffer.length > 0) summary = buffer.join(' ');
+
+    setCvData({
+      header: { name, title, contact },
+      summary,
+      experience,
+      education,
+      skills
+    });
   };
 
   const downloadPDF = () => {
-    const element = containerRef.current;
+    const element = pdfRef.current;
     const opt = {
       margin: 0,
       filename: 'edited-cv.pdf',
@@ -101,141 +141,166 @@ function App() {
       html2canvas: { scale: 2, useCORS: true },
       jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
     };
-    
-    // Temporarily hide controls for clean print
-    const controls = document.querySelectorAll('.editor-controls');
-    controls.forEach(el => el.style.display = 'none');
-    
-    html2pdf().set(opt).from(element).save().then(() => {
-      controls.forEach(el => el.style.display = 'flex');
-    });
+    html2pdf().set(opt).from(element).save();
   };
 
+  const updateStyle = (key, value) => setStyles({ ...styles, [key]: value });
+
   return (
-    <div style={{ padding: '20px', fontFamily: 'system-ui, sans-serif', maxWidth: '1200px', margin: '0 auto' }}>
-      <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-        <h1>CV Visual Editor</h1>
-        <input type="file" accept=".pdf" onChange={handleFileChange} />
+    <div className={`app-container ${darkMode ? 'dark' : 'light'}`}>
+      {/* Header */}
+      <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '1rem 2rem', borderBottom: '1px solid #ddd' }}>
+        <h1 style={{ margin: 0, fontSize: '1.2rem' }}>CV Career Advisor</h1>
+        <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+          {result && (
+            <>
+              <button onClick={() => setActiveTab('analysis')} style={{ background: activeTab === 'analysis' ? '#007bff' : 'transparent', color: activeTab === 'analysis' ? '#fff' : '#333', border: 'none', padding: '8px 16px', borderRadius: '4px', cursor: 'pointer' }}>Analysis</button>
+              <button onClick={() => setActiveTab('editor')} style={{ background: activeTab === 'editor' ? '#007bff' : 'transparent', color: activeTab === 'editor' ? '#fff' : '#333', border: 'none', padding: '8px 16px', borderRadius: '4px', cursor: 'pointer' }}>Visual Editor</button>
+              <button onClick={downloadPDF} style={{ background: '#28a745', color: '#fff', border: 'none', padding: '8px 16px', borderRadius: '4px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '5px' }}><DownloadIcon /> Download PDF</button>
+            </>
+          )}
+          <button onClick={() => setDarkMode(!darkMode)} style={{ background: 'transparent', border: '1px solid #ccc', padding: '8px', borderRadius: '50%', cursor: 'pointer' }}>
+            {darkMode ? <SunIcon /> : <MoonIcon />}
+          </button>
+        </div>
       </header>
 
-      {error && <div style={{ color: 'red', padding: '10px', background: '#ffe6e6' }}>{error}</div>}
-
-      {loading && <div>Loading PDF Engine...</div>}
-
-      {pages.length > 0 && (
-        <div style={{ display: 'flex', gap: '20px', marginTop: '20px' }}>
-          
-          {/* Toolbar */}
-          <div className="editor-controls" style={{ width: '300px', padding: '20px', background: '#f8f9fa', borderRadius: '8px', height: 'fit-content' }}>
-            <h3>Tools</h3>
-            <p style={{fontSize: '0.9rem', color: '#666'}}>Click anywhere on the CV to add/edit text.</p>
-            
-            {selectedBlock ? (
-              <div style={{ borderTop: '1px solid #ddd', paddingTop: '15px' }}>
-                <h4>Edit Selected Text</h4>
-                {textBlocks.filter(b => b.id === selectedBlock).map(block => (
-                  <div key={block.id} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                    <textarea 
-                      value={block.text} 
-                      onChange={(e) => updateBlock(block.id, 'text', e.target.value)}
-                      rows={3}
-                      style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }}
-                    />
-                    <label>Font Size: {block.fontSize}px</label>
-                    <input 
-                      type="range" min="8" max="72" 
-                      value={block.fontSize} 
-                      onChange={(e) => updateBlock(block.id, 'fontSize', parseInt(e.target.value))} 
-                    />
-                    <label>Color</label>
-                    <input 
-                      type="color" 
-                      value={block.color} 
-                      onChange={(e) => updateBlock(block.id, 'color', e.target.value)} 
-                    />
-                    <label>Font Family</label>
-                    <select 
-                      value={block.fontFamily} 
-                      onChange={(e) => updateBlock(block.id, 'fontFamily', e.target.value)}
-                      style={{ padding: '5px' }}
-                    >
-                      <option value="Arial">Arial</option>
-                      <option value="Times New Roman">Times New Roman</option>
-                      <option value="Calibri">Calibri</option>
-                      <option value="Helvetica">Helvetica</option>
-                      <option value="Georgia">Georgia</option>
-                      <option value="Courier New">Courier New</option>
-                    </select>
-                    <button 
-                      onClick={() => setTextBlocks(textBlocks.filter(b => b.id !== block.id))}
-                      style={{ background: '#dc3545', color: 'white', border: 'none', padding: '8px', cursor: 'pointer', marginTop: '10px' }}
-                    >
-                      Delete Text
-                    </button>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <p style={{color: '#999', fontStyle: 'italic'}}>Select a text box to edit properties</p>
-            )}
-
-            <button 
-              onClick={downloadPDF}
-              style={{ width: '100%', marginTop: '20px', padding: '12px', background: '#28a745', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}
-            >
-              Download Edited PDF
+      <main style={{ padding: '2rem', maxWidth: '1200px', margin: '0 auto' }}>
+        {!result ? (
+          <div style={{ textAlign: 'center', padding: '4rem', border: '2px dashed #ccc', borderRadius: '8px' }}>
+            <h2>Upload your CV to start</h2>
+            <input type="file" accept=".pdf" onChange={handleFileChange} style={{ margin: '1rem 0' }} />
+            <br />
+            <button onClick={handleUpload} disabled={!file || loading} style={{ padding: '10px 20px', background: '#007bff', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>
+              {loading ? 'Processing...' : 'Analyze CV'}
             </button>
+            {error && <p style={{ color: 'red', marginTop: '1rem' }}>{error}</p>}
           </div>
-
-          {/* Canvas Area */}
-          <div ref={containerRef} style={{ flex: 1, overflow: 'auto', background: '#555', padding: '20px', borderRadius: '8px' }}>
-            {pages.map((page, index) => (
-              <div key={index} style={{ position: 'relative', margin: '0 auto 20px auto', boxShadow: '0 4px 10px rgba(0,0,0,0.5)' }}>
-                {/* Render PDF Page as Background Image */}
-                <canvas 
-                  id={`page-canvas-${index}`} 
-                  onLoad={() => handlePageRender(page, index)}
-                  style={{ display: 'block', maxWidth: '100%' }}
-                />
-                
-                {/* Interactive Overlay Layer */}
-                <div 
-                  style={{ 
-                    position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', 
-                    cursor: 'text' 
-                  }}
-                  onClick={(e) => addTextBlock(e, index)}
-                >
-                  {textBlocks.filter(b => b.page === index).map(block => (
-                    <div
-                      key={block.id}
-                      onClick={(e) => { e.stopPropagation(); setSelectedBlock(block.id); }}
-                      style={{
-                        position: 'absolute',
-                        left: block.x,
-                        top: block.y,
-                        fontSize: `${block.fontSize}px`,
-                        fontFamily: block.fontFamily,
-                        color: block.color,
-                        fontWeight: block.fontWeight,
-                        border: selectedBlock === block.id ? '2px dashed #007bff' : '1px solid transparent',
-                        padding: '2px',
-                        minWidth: '50px',
-                        backgroundColor: selectedBlock === block.id ? 'rgba(0, 123, 255, 0.1)' : 'transparent',
-                        cursor: 'move',
-                        whiteSpace: 'pre-wrap',
-                        zIndex: 10
-                      }}
-                    >
-                      {block.text}
-                    </div>
-                  ))}
+        ) : (
+          <>
+            {activeTab === 'analysis' && (
+              <div className="analysis-view">
+                <h2>Analysis Results</h2>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2rem' }}>
+                  <div>
+                    <h3>Strengths</h3>
+                    <ul>{result.strengths.map((s, i) => <li key={i} style={{color: 'green'}}>{s}</li>)}</ul>
+                  </div>
+                  <div>
+                    <h3>Issues & Fixes</h3>
+                    {result.issues.map((issue, i) => (
+                      <div key={i} style={{ marginBottom: '1rem', padding: '1rem', background: '#fff3cd', borderRadius: '4px' }}>
+                        <strong>{issue.title}</strong>
+                        <p>{issue.description}</p>
+                        <ul>{result.solutions[issue.id]?.map((sol, j) => <li key={j}>{sol}</li>)}</ul>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               </div>
-            ))}
-          </div>
-        </div>
-      )}
+            )}
+
+            {activeTab === 'editor' && (
+              <div className="editor-view" style={{ display: 'flex', gap: '2rem', flexDirection: 'row' }}>
+                {/* Controls Sidebar */}
+                <div style={{ flex: '0 0 250px', padding: '1rem', background: '#f8f9fa', borderRadius: '8px', height: 'fit-content' }}>
+                  <h3>Style Controls</h3>
+                  <label style={{display:'block', marginBottom:'0.5rem'}}>Font Family</label>
+                  <select value={styles.fontFamily} onChange={(e) => updateStyle('fontFamily', e.target.value)} style={{width:'100%', padding:'5px', marginBottom:'1rem'}}>
+                    <option value="Arial, sans-serif">Arial</option>
+                    <option value="'Times New Roman', serif">Times New Roman</option>
+                    <option value="'Calibri', sans-serif">Calibri</option>
+                    <option value="'Georgia', serif">Georgia</option>
+                    <option value="'Courier New', monospace">Courier New</option>
+                  </select>
+
+                  <label style={{display:'block', marginBottom:'0.5rem'}}>Primary Color</label>
+                  <input type="color" value={styles.primaryColor} onChange={(e) => updateStyle('primaryColor', e.target.value)} style={{width:'100%', height:'40px', marginBottom:'1rem'}} />
+
+                  <label style={{display:'block', marginBottom:'0.5rem'}}>Text Size</label>
+                  <input type="range" min="10" max="18" value={parseInt(styles.fontSize)} onChange={(e) => updateStyle('fontSize', `${e.target.value}px`)} style={{width:'100%', marginBottom:'1rem'}} />
+                  
+                  <p style={{fontSize:'0.8rem', color:'#666'}}>Tip: Click any text below to edit it directly.</p>
+                </div>
+
+                {/* A4 Preview Area */}
+                <div style={{ flex: 1, overflow: 'auto', background: '#555', padding: '2rem', display: 'flex', justifyContent: 'center' }}>
+                  <div 
+                    ref={pdfRef}
+                    contentEditable
+                    suppressContentEditableWarning
+                    style={{
+                      width: '210mm',
+                      minHeight: '297mm',
+                      background: 'white',
+                      padding: '20mm',
+                      boxSizing: 'border-box',
+                      fontFamily: styles.fontFamily,
+                      fontSize: styles.fontSize,
+                      color: styles.textColor,
+                      outline: 'none',
+                      boxShadow: '0 0 10px rgba(0,0,0,0.5)'
+                    }}
+                  >
+                    {/* Editable Content Structure */}
+                    <div style={{ textAlign: 'center', borderBottom: `2px solid ${styles.primaryColor}`, paddingBottom: '10px', marginBottom: '20px' }}>
+                      <h1 style={{ margin: 0, color: styles.primaryColor, fontSize: '1.5em' }}>{cvData.header.name}</h1>
+                      <p style={{ margin: '5px 0', fontWeight: 'bold' }}>{cvData.header.title}</p>
+                      <p style={{ margin: 0, fontSize: '0.9em' }}>{cvData.header.contact}</p>
+                    </div>
+
+                    {cvData.summary && (
+                      <div style={{ marginBottom: '20px' }}>
+                        <h3 style={{ color: styles.primaryColor, textTransform: 'uppercase', borderBottom: '1px solid #ddd' }}>Professional Summary</h3>
+                        <p>{cvData.summary}</p>
+                      </div>
+                    )}
+
+                    {cvData.experience.length > 0 && (
+                      <div style={{ marginBottom: '20px' }}>
+                        <h3 style={{ color: styles.primaryColor, textTransform: 'uppercase', borderBottom: '1px solid #ddd' }}>Experience</h3>
+                        {cvData.experience.map((exp, i) => (
+                          <div key={i} style={{ marginBottom: '15px' }}>
+                            <p style={{ whiteSpace: 'pre-wrap' }}>{exp}</p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {cvData.education.length > 0 && (
+                      <div style={{ marginBottom: '20px' }}>
+                        <h3 style={{ color: styles.primaryColor, textTransform: 'uppercase', borderBottom: '1px solid #ddd' }}>Education</h3>
+                        {cvData.education.map((edu, i) => (
+                          <div key={i} style={{ marginBottom: '10px' }}>
+                            <p style={{ whiteSpace: 'pre-wrap' }}>{edu}</p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    
+                    {cvData.skills.length > 0 && (
+                      <div>
+                        <h3 style={{ color: styles.primaryColor, textTransform: 'uppercase', borderBottom: '1px solid #ddd' }}>Skills</h3>
+                        <p>{cvData.skills.join(', ')}</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+      </main>
+
+      <style>{`
+        body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; transition: background 0.3s, color 0.3s; }
+        .app-container.light { background: #f4f6f8; color: #333; }
+        .app-container.dark { background: #1a1a1a; color: #f0f0f0; }
+        .app-container.dark header { border-color: #444; background: #2d2d2d; }
+        .app-container.dark .analysis-view h3 { color: #fff; }
+        .app-container.dark button { color: #fff; }
+        .app-container.dark button:not([style*="background: #"]) { background: #444 !important; }
+      `}</style>
     </div>
   );
 }
