@@ -1,27 +1,29 @@
-import { useState, useEffect } from 'react';
+import { useState, useRef, useEffect } from 'react';
+import html2pdf from 'html2pdf.js';
 
 function App() {
   const [file, setFile] = useState(null);
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [activeTab, setActiveTab] = useState('overview'); 
+  const [activeTab, setActiveTab] = useState('analysis'); // 'analysis', 'editor', 'raw'
   const [theme, setTheme] = useState('light');
+  
+  // Editor State
+  const [cvContent, setCvContent] = useState('');
+  const cvRef = useRef(null);
 
-  // Load theme from preference
-  useEffect(() => {
-    if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
-      setTheme('dark');
-    }
-  }, []);
-
-  const toggleTheme = () => setTheme(prev => prev === 'light' ? 'dark' : 'light');
+  // Toggle Theme
+  const toggleTheme = () => {
+    setTheme(theme === 'light' ? 'dark' : 'light');
+  };
 
   const handleFileChange = (e) => {
     if (e.target.files[0]) {
       setFile(e.target.files[0]);
       setError('');
       setResult(null);
+      setActiveTab('analysis');
     }
   };
 
@@ -35,11 +37,17 @@ function App() {
     formData.append('cv', file);
 
     try {
-      const response = await fetch('/api/upload-cv', { method: 'POST', body: formData });
+      const response = await fetch('/api/upload-cv', {
+        method: 'POST',
+        body: formData,
+      });
+
       const data = await response.json();
-      if (!response.ok) throw new Error(data.details || 'Failed');
+      if (!response.ok) throw new Error(data.details || 'Failed to upload');
+      
       setResult(data);
-      setActiveTab('overview');
+      setCvContent(data.rawText); // Load raw text into editor
+      setActiveTab('analysis');
     } catch (err) {
       setError(err.message);
     } finally {
@@ -47,193 +55,322 @@ function App() {
     }
   };
 
-  // Helper to highlight text based on issues/strengths keywords
-  const getHighlightedText = (text) => {
-    if (!result) return text;
+  const downloadPDF = () => {
+    const element = cvRef.current;
+    const opt = {
+      margin:       [10, 10, 10, 10], // mm
+      filename:     'edited-cv.pdf',
+      image:        { type: 'jpeg', quality: 0.98 },
+      html2canvas:  { scale: 2, useCORS: true },
+      jsPDF:        { unit: 'mm', format: 'a4', orientation: 'portrait' }
+    };
     
-    let highlighted = text;
-    
-    // Highlight Strengths (Green)
-    result.strengths.forEach(str => {
-      // Extract keywords from strength description roughly
-      const keywords = ['contact', 'email', 'phone', 'summary', 'profile', 'metric', 'number', '%', 'action', 'verb', 'date', 'skill', 'education', 'degree', 'progression'];
-      // This is a simple visualizer; in a real app we'd map specific regex matches
-      // For now, we highlight known good patterns found in the text
-    });
-
-    // Highlight Issues (Red Background)
-    // We will highlight generic patterns associated with the detected issues
-    if (result.issues.some(i => i.id === 'metrics')) {
-      // If metrics issue exists, highlight numbers that ARE there to show "Good", 
-      // but since we can't know what's missing, we highlight the sections lacking context?
-      // Better approach: Highlight the SECTIONS that have issues.
-    }
-    
-    // Simplified Visualizer: Just return text for now, but styled differently in the component
-    return highlighted;
+    // Use html2pdf to convert the DOM element to PDF
+    html2pdf().set(opt).from(element).save();
   };
 
-  const styles = {
-    bg: theme === 'dark' ? '#1a202c' : '#f7fafc',
-    card: theme === 'dark' ? '#2d3748' : '#ffffff',
-    text: theme === 'dark' ? '#e2e8f0' : '#2d3748',
-    textMuted: theme === 'dark' ? '#a0aec0' : '#718096',
-    border: theme === 'dark' ? '#4a5568' : '#e2e8f0',
-    primary: '#4299e1',
-    success: '#48bb78',
-    danger: '#f56565',
-    warning: '#ed8936'
+  const getSeverityColor = (severity) => {
+    if (severity === 'critical') return '#dc3545';
+    if (severity === 'high') return '#fd7e14';
+    return '#ffc107';
   };
+
+  const themeStyles = theme === 'dark' 
+    ? { bg: '#1a202c', text: '#f7fafc', card: '#2d3748', border: '#4a5568' }
+    : { bg: '#f3f4f6', text: '#1f2937', card: '#ffffff', border: '#e5e7eb' };
 
   return (
-    <div style={{ minHeight: '100vh', background: styles.bg, color: styles.text, fontFamily: 'system-ui, sans-serif', transition: 'all 0.3s' }}>
-      
+    <div style={{ 
+      minHeight: '100vh', 
+      background: themeStyles.bg, 
+      color: themeStyles.text, 
+      fontFamily: 'system-ui, sans-serif',
+      transition: 'all 0.3s ease'
+    }}>
       {/* Header */}
-      <header style={{ padding: '1.5rem 2rem', borderBottom: `1px solid ${styles.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: styles.card }}>
+      <header style={{ 
+        padding: '1.5rem 2rem', 
+        borderBottom: `1px solid ${themeStyles.border}`,
+        display: 'flex', 
+        justifyContent: 'space-between', 
+        alignItems: 'center',
+        background: themeStyles.card
+      }}>
         <div>
-          <h1 style={{ margin: 0, fontSize: '1.5rem', fontWeight: '800' }}>CV ATS Analyzer</h1>
-          <p style={{ margin: '0.25rem 0 0', color: styles.textMuted, fontSize: '0.9rem' }}>International Standards & Gap Detection</p>
+          <h1 style={{ margin: 0, fontSize: '1.5rem', fontWeight: 'bold' }}>CV Career Advisor</h1>
+          <p style={{ margin: '0.25rem 0 0', opacity: 0.7, fontSize: '0.9rem' }}>Analyze, Edit, and Optimize your CV</p>
         </div>
-        <button onClick={toggleTheme} style={{ background: 'transparent', border: `1px solid ${styles.border}`, color: styles.text, padding: '0.5rem', borderRadius: '50%', cursor: 'pointer', fontSize: '1.2rem' }}>
+        <button 
+          onClick={toggleTheme}
+          style={{
+            background: 'transparent',
+            border: `1px solid ${themeStyles.border}`,
+            color: themeStyles.text,
+            padding: '8px 12px',
+            borderRadius: '6px',
+            cursor: 'pointer',
+            fontSize: '1.2rem'
+          }}
+          title="Toggle Theme"
+        >
           {theme === 'light' ? '🌙' : '☀️'}
         </button>
       </header>
 
       <main style={{ maxWidth: '1000px', margin: '0 auto', padding: '2rem' }}>
         
-        {/* Upload Area */}
+        {/* Upload Section */}
         {!result && (
-          <div style={{ textAlign: 'center', padding: '4rem 2rem', background: styles.card, borderRadius: '12px', border: `2px dashed ${styles.border}` }}>
+          <div style={{ 
+            border: `2px dashed ${themeStyles.border}`, 
+            padding: '3rem', 
+            textAlign: 'center', 
+            borderRadius: '12px', 
+            background: themeStyles.card 
+          }}>
             <h2 style={{ marginBottom: '1rem' }}>Upload your CV (PDF)</h2>
-            <p style={{ color: styles.textMuted, marginBottom: '2rem' }}>Get an instant score based on 10 global ATS standards.</p>
-            <input type="file" accept=".pdf" onChange={handleFileChange} style={{ marginBottom: '1.5rem' }} />
+            <input 
+              type="file" 
+              accept=".pdf" 
+              onChange={handleFileChange} 
+              style={{ marginBottom: '1.5rem', fontSize: '1rem' }} 
+            />
             <br />
-            <button onClick={handleUpload} disabled={!file || loading} style={{ padding: '12px 32px', background: loading ? styles.textMuted : styles.primary, color: 'white', border: 'none', borderRadius: '8px', fontSize: '1rem', fontWeight: 'bold', cursor: loading ? 'not-allowed' : 'pointer' }}>
-              {loading ? 'Analyzing...' : 'Analyze CV'}
+            <button 
+              onClick={handleUpload} 
+              disabled={!file || loading}
+              style={{ 
+                padding: '12px 32px', 
+                background: loading ? '#9ca3af' : '#2563eb', 
+                color: 'white', 
+                border: 'none', 
+                borderRadius: '8px', 
+                cursor: loading ? 'not-allowed' : 'pointer',
+                fontSize: '1rem',
+                fontWeight: 'bold',
+                transition: 'background 0.2s'
+              }}
+            >
+              {loading ? 'Analyzing...' : 'Start Analysis'}
             </button>
-            {error && <p style={{ color: styles.danger, marginTop: '1rem' }}>{error}</p>}
           </div>
         )}
 
-        {/* Results Dashboard */}
+        {error && (
+          <div style={{ 
+            marginTop: '1rem', 
+            color: '#fee2e2', 
+            background: '#991b1b', 
+            padding: '1rem', 
+            borderRadius: '8px' 
+          }}>
+            <strong>Error:</strong> {error}
+          </div>
+        )}
+
+        {/* Dashboard */}
         {result && (
           <div>
-            {/* Score Card */}
-            <div style={{ background: styles.card, padding: '2rem', borderRadius: '12px', marginBottom: '2rem', textAlign: 'center', border: `1px solid ${styles.border}` }}>
-              <h2 style={{ margin: '0 0 1rem', fontSize: '1.2rem' }}>ATS Alignment Score</h2>
-              <div style={{ position: 'relative', width: '150px', height: '150px', margin: '0 auto' }}>
-                <svg viewBox="0 0 36 36" style={{ transform: 'rotate(-90deg)', width: '100%', height: '100%' }}>
-                  <path d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke={styles.border} strokeWidth="3" />
-                  <path d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke={result.percentage > 80 ? styles.success : result.percentage > 50 ? styles.warning : styles.danger} strokeWidth="3" strokeDasharray={`${result.percentage}, 100`} />
-                </svg>
-                <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', fontSize: '2rem', fontWeight: 'bold' }}>
-                  {result.percentage}%
+            {/* Tabs */}
+            <div style={{ 
+              display: 'flex', 
+              gap: '0.5rem', 
+              marginBottom: '1.5rem',
+              borderBottom: `1px solid ${themeStyles.border}`,
+              paddingBottom: '0.5rem'
+            }}>
+              <button 
+                onClick={() => setActiveTab('analysis')}
+                style={{ 
+                  padding: '8px 16px', 
+                  background: activeTab === 'analysis' ? '#2563eb' : 'transparent', 
+                  color: activeTab === 'analysis' ? 'white' : themeStyles.text, 
+                  border: 'none', 
+                  borderRadius: '6px', 
+                  cursor: 'pointer',
+                  fontWeight: activeTab === 'analysis' ? 'bold' : 'normal'
+                }}
+              >
+                📊 Analysis & Gaps
+              </button>
+              <button 
+                onClick={() => setActiveTab('editor')}
+                style={{ 
+                  padding: '8px 16px', 
+                  background: activeTab === 'editor' ? '#2563eb' : 'transparent', 
+                  color: activeTab === 'editor' ? 'white' : themeStyles.text, 
+                  border: 'none', 
+                  borderRadius: '6px', 
+                  cursor: 'pointer',
+                  fontWeight: activeTab === 'editor' ? 'bold' : 'normal'
+                }}
+              >
+                ✏️ Visual Editor
+              </button>
+            </div>
+
+            {/* Analysis Tab */}
+            {activeTab === 'analysis' && (
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
+                {/* Issues */}
+                <div style={{ background: themeStyles.card, padding: '1.5rem', borderRadius: '12px', border: `1px solid ${themeStyles.border}` }}>
+                  <h3 style={{ marginTop: 0, color: '#ef4444' }}>⚠️ Issues & Gaps</h3>
+                  {result.issues.length === 0 ? (
+                    <p>No critical issues found!</p>
+                  ) : (
+                    result.issues.map((issue, idx) => (
+                      <div key={idx} style={{ marginBottom: '1.5rem', paddingBottom: '1.5rem', borderBottom: `1px solid ${themeStyles.border}` }}>
+                        <div style={{ display: 'flex', alignItems: 'center', marginBottom: '0.5rem' }}>
+                          <span style={{ 
+                            width: '10px', height: '10px', borderRadius: '50%', 
+                            background: getSeverityColor(issue.severity), 
+                            marginRight: '10px' 
+                          }}></span>
+                          <strong>{issue.title}</strong>
+                        </div>
+                        <p style={{ fontSize: '0.9rem', opacity: 0.8 }}>{issue.description}</p>
+                        <div style={{ background: theme === 'dark' ? '#2d3748' : '#eff6ff', padding: '0.75rem', borderRadius: '6px', marginTop: '0.5rem' }}>
+                          <strong style={{ fontSize: '0.85rem', display: 'block', marginBottom: '0.25rem' }}>💡 Fix:</strong>
+                          <ul style={{ margin: 0, paddingLeft: '1.2rem', fontSize: '0.85rem' }}>
+                            {result.solutions[issue.id]?.map((sol, sIdx) => (
+                              <li key={sIdx} style={{ marginBottom: '0.25rem' }}>{sol}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                {/* Strengths */}
+                <div style={{ background: themeStyles.card, padding: '1.5rem', borderRadius: '12px', border: `1px solid ${themeStyles.border}` }}>
+                  <h3 style={{ marginTop: 0, color: '#10b981' }}>✅ Strengths</h3>
+                  <ul style={{ listStyle: 'none', padding: 0 }}>
+                    {result.strengths.map((str, idx) => (
+                      <li key={idx} style={{ 
+                        padding: '0.75rem', 
+                        background: theme === 'dark' ? '#064e3b' : '#ecfdf5', 
+                        borderLeft: '4px solid #10b981', 
+                        marginBottom: '0.75rem',
+                        borderRadius: '0 4px 4px 0'
+                      }}>
+                        {str}
+                      </li>
+                    ))}
+                  </ul>
+                  
+                  {/* Alignment Score */}
+                  <div style={{ marginTop: '2rem', textAlign: 'center' }}>
+                    <div style={{ fontSize: '2.5rem', fontWeight: 'bold', color: result.issues.length < 3 ? '#10b981' : '#f59e0b' }}>
+                      {Math.max(0, 100 - (result.issues.length * 10))}%
+                    </div>
+                    <div style={{ opacity: 0.7 }}>ATS Alignment Score</div>
+                  </div>
                 </div>
               </div>
-              <p style={{ marginTop: '1rem', color: styles.textMuted }}>Based on 10 International Criteria</p>
-              <button onClick={() => setResult(null)} style={{ marginTop: '1rem', background: 'transparent', border: `1px solid ${styles.border}`, color: styles.text, padding: '6px 12px', borderRadius: '6px', cursor: 'pointer' }}>Analyze Another</button>
-            </div>
+            )}
 
-            {/* Tabs */}
-            <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.5rem', overflowX: 'auto' }}>
-              {['overview', 'issues', 'strengths', 'visual'].map(tab => (
-                <button key={tab} onClick={() => setActiveTab(tab)} style={{ 
-                  padding: '10px 20px', 
-                  background: activeTab === tab ? styles.primary : styles.card, 
-                  color: activeTab === tab ? 'white' : styles.text, 
-                  border: `1px solid ${styles.border}`, 
-                  borderRadius: '8px', 
-                  cursor: 'pointer',
-                  whiteSpace: 'nowrap',
-                  fontWeight: activeTab === tab ? 'bold' : 'normal'
+            {/* Visual Editor Tab */}
+            {activeTab === 'editor' && (
+              <div style={{ display: 'grid', gridTemplateColumns: '300px 1fr', gap: '1.5rem', alignItems: 'start' }}>
+                
+                {/* Controls */}
+                <div style={{ background: themeStyles.card, padding: '1.5rem', borderRadius: '12px', border: `1px solid ${themeStyles.border}` }}>
+                  <h3 style={{ marginTop: 0 }}>Editor Controls</h3>
+                  <p style={{ fontSize: '0.9rem', opacity: 0.8, marginBottom: '1rem' }}>
+                    Edit the text directly on the A4 preview on the right. Changes save automatically.
+                  </p>
+                  
+                  <div style={{ marginBottom: '1rem' }}>
+                    <label style={{ display: 'block', fontSize: '0.85rem', marginBottom: '0.25rem', fontWeight: 'bold' }}>Font Family</label>
+                    <select 
+                      onChange={(e) => {
+                        if(cvRef.current) cvRef.current.style.fontFamily = e.target.value;
+                      }}
+                      style={{ width: '100%', padding: '8px', borderRadius: '4px', border: `1px solid ${themeStyles.border}` }}
+                    >
+                      <option value="Arial, sans-serif">Arial</option>
+                      <option value="'Times New Roman', serif">Times New Roman</option>
+                      <option value="Georgia, serif">Georgia</option>
+                      <option value="'Courier New', monospace">Courier New</option>
+                      <option value="Verdana, sans-serif">Verdana</option>
+                    </select>
+                  </div>
+
+                  <div style={{ marginBottom: '1rem' }}>
+                    <label style={{ display: 'block', fontSize: '0.85rem', marginBottom: '0.25rem', fontWeight: 'bold' }}>Text Color</label>
+                    <input 
+                      type="color" 
+                      defaultValue="#000000"
+                      onChange={(e) => {
+                        if(cvRef.current) cvRef.current.style.color = e.target.value;
+                      }}
+                      style={{ width: '100%', height: '40px', border: 'none', cursor: 'pointer' }}
+                    />
+                  </div>
+
+                  <div style={{ marginBottom: '1rem' }}>
+                    <label style={{ display: 'block', fontSize: '0.85rem', marginBottom: '0.25rem', fontWeight: 'bold' }}>Background Color</label>
+                    <input 
+                      type="color" 
+                      defaultValue="#ffffff"
+                      onChange={(e) => {
+                        if(cvRef.current) cvRef.current.style.background = e.target.value;
+                      }}
+                      style={{ width: '100%', height: '40px', border: 'none', cursor: 'pointer' }}
+                    />
+                  </div>
+
+                  <button 
+                    onClick={downloadPDF}
+                    style={{ 
+                      width: '100%', 
+                      padding: '12px', 
+                      background: '#059669', 
+                      color: 'white', 
+                      border: 'none', 
+                      borderRadius: '6px', 
+                      cursor: 'pointer',
+                      fontWeight: 'bold',
+                      marginTop: '1rem'
+                    }}
+                  >
+                    📥 Download PDF
+                  </button>
+                </div>
+
+                {/* A4 Preview Area */}
+                <div style={{ 
+                  background: '#525659', 
+                  padding: '2rem', 
+                  borderRadius: '12px', 
+                  overflow: 'auto',
+                  display: 'flex',
+                  justifyContent: 'center'
                 }}>
-                  {tab.charAt(0).toUpperCase() + tab.slice(1)}
-                  {tab === 'issues' && ` (${result.issues.length})`}
-                  {tab === 'strengths' && ` (${result.strengths.length})`}
-                </button>
-              ))}
-            </div>
-
-            {/* Content */}
-            <div style={{ background: styles.card, padding: '2rem', borderRadius: '12px', border: `1px solid ${styles.border}`, minHeight: '400px' }}>
-              
-              {activeTab === 'overview' && (
-                <div>
-                  <h3 style={{ borderBottom: `1px solid ${styles.border}`, paddingBottom: '1rem' }}>Summary</h3>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '2rem', marginTop: '1.5rem' }}>
-                    <div>
-                      <h4 style={{ color: styles.success }}>✓ Strengths ({result.strengths.length})</h4>
-                      <ul style={{ paddingLeft: '1.2rem', lineHeight: '1.6' }}>
-                        {result.strengths.slice(0, 3).map((s, i) => <li key={i}>{s}</li>)}
-                      </ul>
-                    </div>
-                    <div>
-                      <h4 style={{ color: styles.danger }}>⚠ Critical Fixes ({result.issues.filter(i=>i.severity==='critical' || i.severity==='high').length})</h4>
-                      <ul style={{ paddingLeft: '1.2rem', lineHeight: '1.6' }}>
-                        {result.issues.filter(i=>i.severity==='critical' || i.severity==='high').slice(0, 3).map((iss, i) => (
-                          <li key={i}>
-                            <strong>{iss.title}</strong>: {iss.description}
-                          </li>
-                        ))}
-                        {result.issues.filter(i=>i.severity==='critical' || i.severity==='high').length === 0 && <li style={{color: styles.textMuted}}>No critical issues!</li>}
-                      </ul>
-                    </div>
+                  <div 
+                    ref={cvRef}
+                    contentEditable
+                    suppressContentEditableWarning
+                    style={{
+                      width: '210mm',
+                      minHeight: '297mm',
+                      padding: '20mm',
+                      background: 'white',
+                      color: 'black',
+                      fontFamily: 'Arial, sans-serif',
+                      fontSize: '11pt',
+                      lineHeight: '1.5',
+                      outline: 'none',
+                      boxShadow: '0 0 10px rgba(0,0,0,0.5)',
+                      whiteSpace: 'pre-wrap'
+                    }}
+                  >
+                    {cvContent}
                   </div>
                 </div>
-              )}
-
-              {activeTab === 'issues' && (
-                <div>
-                  {result.issues.length === 0 ? <p>Perfect! No issues found.</p> : result.issues.map((issue, idx) => (
-                    <div key={idx} style={{ marginBottom: '2rem', paddingBottom: '2rem', borderBottom: `1px solid ${styles.border}` }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '0.5rem' }}>
-                        <span style={{ width: '10px', height: '10px', borderRadius: '50%', background: issue.severity === 'critical' ? styles.danger : issue.severity === 'high' ? styles.warning : '#ecc94b' }}></span>
-                        <h3 style={{ margin: 0 }}>{issue.title}</h3>
-                        <span style={{ fontSize: '0.8rem', background: styles.border, padding: '2px 8px', borderRadius: '4px' }}>{issue.category}</span>
-                      </div>
-                      <p style={{ color: styles.textMuted, marginLeft: '20px' }}>{issue.description}</p>
-                      <div style={{ background: theme === 'dark' ? '#2d3748' : '#ebf8ff', padding: '1rem', borderRadius: '8px', marginLeft: '20px', marginTop: '1rem' }}>
-                        <strong style={{ color: styles.primary }}>💡 How to fix:</strong>
-                        <ul style={{ margin: '0.5rem 0 0', paddingLeft: '1.2rem' }}>
-                          {result.solutions[issue.id].map((sol, sIdx) => <li key={sIdx} style={{ marginBottom: '0.5rem' }}>{sol}</li>)}
-                        </ul>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {activeTab === 'strengths' && (
-                <ul style={{ listStyle: 'none', padding: 0 }}>
-                  {result.strengths.map((str, idx) => (
-                    <li key={idx} style={{ padding: '1rem', background: theme === 'dark' ? '#22543d' : '#f0fff4', borderLeft: `4px solid ${styles.success}`, marginBottom: '1rem', borderRadius: '0 8px 8px 0' }}>
-                      <strong>✓ {str}</strong>
-                    </li>
-                  ))}
-                </ul>
-              )}
-
-              {activeTab === 'visual' && (
-                <div>
-                  <p style={{ marginBottom: '1rem', color: styles.textMuted }}>
-                    <span style={{ display: 'inline-block', width: '12px', height: '12px', background: 'rgba(245, 101, 101, 0.3)', border: '1px solid red', marginRight: '5px' }}></span> 
-                    Areas needing improvement are highlighted below.
-                  </p>
-                  <div style={{ background: theme === 'dark' ? '#1a202c' : '#fff', padding: '1.5rem', borderRadius: '8px', border: `1px solid ${styles.border}`, lineHeight: '1.8', whiteSpace: 'pre-wrap' }}>
-                    {/* Simple Visualizer: Highlights text if an issue keyword is near it? 
-                        For now, we just show the raw text but styled cleanly. 
-                        True highlighting requires mapping char offsets which is complex for this demo.
-                        Instead, we show the Raw Text clearly.
-                    */}
-                    {result.rawText}
-                  </div>
-                  <p style={{ marginTop: '1rem', fontSize: '0.9rem', color: styles.textMuted }}>
-                    *Tip: Cross-reference the "Issues" tab with this text to locate specific sections.
-                  </p>
-                </div>
-              )}
-
-            </div>
+              </div>
+            )}
           </div>
         )}
       </main>
